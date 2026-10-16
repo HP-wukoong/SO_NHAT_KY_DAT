@@ -1655,6 +1655,77 @@ var Core = (function () {
   PRESETS.c18 = makeC1('18 (HN)', 'Kiệt', { d0: '17/09', cab: ['18/09', '22/11'], b3: ['17/09', '19/09'], b4a: ['20/09', '22/09'], b4b: ['23/09', '25/09'], b5: ['26/09', '28/09'], b8: ['29/09', '06/10'], b9a: ['07/10', '14/10'], b11: ['15/10', '22/10'], b12: ['23/10', '24/10'], b14: ['25/10', '01/11'], b6a: ['02/11', '07/11'], b6b: ['08/11', '20/11'], b9b: '21/11', b13a: ['22/11', '23/11'], b13b: '24/11', kt: '25/11', lt1: ['05/12', '07/12'], lt2: ['07/12', '09/12'], thaco: ['10/11', '20/11'] }, { lap: '16/09', xe: ['81A56261', '77A45952'] });
   PRESETS.c19 = makeC1('19 (HN)', 'N.Đ.Tuấn, B.T.Tuấn', { d0: '01/10', cab: ['02/10', '06/12'], b3: ['01/10', '03/10'], b4a: ['04/10', '06/10'], b4b: ['07/10', '09/10'], b5: ['10/10', '12/10'], b8: ['13/10', '20/10'], b9a: ['21/10', '28/10'], b11: ['29/10', '05/11'], b12: ['06/11', '07/11'], b14: ['08/11', '15/11'], b6a: ['16/11', '21/11'], b6b: ['22/11', '04/12'], b9b: '05/12', b13a: ['06/12', '07/12'], b13b: '08/12', kt: '09/12', lt1: ['19/12', '21/12'], lt2: ['21/12', '23/12'], thaco: ['24/11', '04/12'] }, { lap: '30/10' });
 
+  PRESETS.c20 = makeC1('20 (HN)', 'T.Q.Hòa, Kiểm, Đ.Tây, Vệ', { d0: '15/10', cab: ['16/10', '20/12'], b3: ['15/10', '17/10'], b4a: ['18/10', '20/10'], b4b: ['21/10', '23/10'], b5: ['24/10', '26/10'], b8: ['27/10', '03/11'], b9a: ['04/11', '11/11'], b11: ['12/11', '19/11'], b12: ['20/11', '21/11'], b14: ['22/11', '29/11'], b6a: ['30/11', '05/12'], b6b: ['06/12', '18/12'], b9b: '19/12', b13a: ['20/12', '21/12'], b13b: '22/12', kt: '23/12', lt1: ['02/01', '04/01'], lt2: ['04/01', '06/01'], thaco: ['24/11', '04/12'] }, { lap: '14/10' });
+  PRESETS.c21 = makeC1('21 (HN)', 'Q.Đạt, L.Duy, Khải, T.Q.Trí, Tín', { d0: '29/10', cab: ['30/10', '03/01'], b3: ['29/10', '31/10'], b4a: ['01/11', '03/11'], b4b: ['04/11', '06/11'], b5: ['07/11', '09/11'], b8: ['10/11', '17/11'], b9a: ['18/11', '25/11'], b11: ['26/11', '03/12'], b12: ['04/12', '05/12'], b14: ['06/12', '13/12'], b6a: ['14/12', '19/12'], b6b: ['20/12', '01/01'], b9b: '02/01', b13a: ['03/01', '04/01'], b13b: '05/01', kt: '06/01', lt1: ['16/01', '18/01'], lt2: ['18/01', '20/01'], thaco: ['22/12', '31/12'] }, { lap: '28/10' });
+
+  /* ---------- Lịch hạng B số tự động (Khóa 23–25 HN): cùng khung với K21 ---------- */
+  function makeBstd(khoa, gv, D, extra) {
+    var S = 'Sân tập lái CSHN', DN = 'CSHN-Đèo Nhông-Phố Khánh', QN = 'CSHN-Quy Nhơn-Đức Phổ';
+    var rows = [
+      ['I', 'I', 'Tập lái xe trên xe ô tô được kê kích', null, 'T5', D.d0, D.d0, S, null, null, null, 2],
+      ['1', '1', 'Tập lái tại chỗ không nổ máy', 0.2, 'T5', D.d0, D.d0, S, null, null, null, 1],
+      ['2', '2', 'Tập lái tại chỗ có nổ máy', 0.2, 'T5', D.d0, D.d0, S, null, null, null, 1],
+      ['3', '7', 'Tập lái xe trên đường cao tốc và đường cao tốc phân kỳ đầu tư (Tập lái xe trên cabin học lái ô tô)', null, 'T6', D.cab[0], D.cab[1], 'Cabin học lái ôtô CSHN', null, null, null, null, '2 giờ/1hv (GVCN kiểm tra). Bố trí tập bài Cao tốc'],
+      ['II', 'II', 'Tập lái xe trên sân tập lái', null, 'T5', D.d0, D.b5[1], S],
+      ['4', '3', 'Tập lái xe trong bài phẳng', 4, 'T5', D.b3[0], D.b3[1], S, 20],
+      ['5', '4a', 'Tập lái xe trong hình số 3, số 8 ghép', 4, 'T2', D.b4a[0], D.b4a[1], S, 10],
+      ['6', '4b', 'Tập lái xe tiến lùi theo hình chữ chi, ghép xe vào nơi đỗ', 3, 'T6', D.b4b[0], D.b4b[1], S, 15, 15],
+      ['7', '5', 'Tập lái xe trên đường bằng', 3, 'T2', D.b5[0], D.b5[1], S, 30, 30],
+      ['III', 'III', 'Tập lái xe trên đường giao thông'],
+      ['8', '9a', 'Tập lái xe trên đường phức tạp', 4, 'T5', D.b9a[0], D.b9a[1], QN, 110, 110],
+      ['9', '8', 'Tập lái xe trên đường dốc, đường vòng quanh co', 3, 'T2', D.b8[0], D.b8[1], DN, 140, 140],
+      ['10', '8, 10', 'Tập lái xe trên đường dốc, đường vòng quanh co + TL ban đêm', 4, 'T5', D.b810[0], D.b810[1], DN, 140, null, 100, null, 'T.lái b.đêm: 4h/hv'],
+      ['11', '9a, 10', 'Tập lái xe trên đường phức tạp + TL ban đêm', 2, 'T2', D.b9a10[0], D.b9a10[1], QN, 140, null, 100],
+      ['12', '6a', 'Bài TL ghép xe vào nơi đỗ (HTH)', 2, 'T4', D.b6a[0], D.b6a[1], S, 10, 10],
+      ['13', '6b', 'Bài tập lái tổng hợp', 8, 'T6', D.b6b[0], D.b6b[1], S, 19, 19],
+      ['14', '9b', 'Tập lái xe đường ph.tạp (T.phố + Q.đầu xe)', 1, 'T7', D.b9b, D.b9b, 'CSHN-B.Sơn+Km1138-1140 (QL1A)', 100, 100],
+      ['15', '11a', 'Ôn luyện theo các nội dung sát hạch lái xe', 2, 'CN', D.b11a[0], D.b11a[1], S, 19, 19],
+      ['16', '11b', 'Ôn luyện theo các nội dung sát hạch lái xe', 1, 'T3', D.b11b, D.b11b, 'QL19B - ĐT640', 100, 100]
+    ];
+    var moc = [
+      { ten: 'Kiểm tra xét hoàn thành khóa học (LT + C.chi + Hình TH + Đ.trường)', tu: D.kt, den: D.kt, noi: 'Trung tâm SH Nhơn Hội' },
+      { ten: 'Luyện tập: Bài tập lái tổng hợp (Xe TB)', tu: D.lt1[0], den: D.lt1[1], noi: 'Trung tâm SH Nhơn Hội' },
+      { ten: 'Luyện tập: Tập lái xe trên đường (Xe TB)', tu: D.lt2[0], den: D.lt2[1], noi: 'Trung tâm SH Nhơn Hội' }
+    ];
+    return Object.assign({ ten: 'Khóa ' + khoa + ' · Bstđ', course: { khoa: khoa, hang: 'Bstđ', nam: 2026, hvLop: 5, hvThuc: 5, gioCa: 4, giaoVien: gv }, rows: rows, moc: moc }, extra || {});
+  }
+  PRESETS.k23 = makeBstd('23 (HN)', 'L.Hoàng', { d0: '17/09', cab: ['18/09', '25/10'], b3: ['17/09', '20/09'], b4a: ['21/09', '24/09'], b4b: ['25/09', '27/09'], b5: ['28/09', '30/09'], b9a: ['01/10', '04/10'], b8: ['05/10', '07/10'], b810: ['08/10', '11/10'], b9a10: ['12/10', '13/10'], b6a: ['14/10', '15/10'], b6b: ['16/10', '23/10'], b9b: '24/10', b11a: ['25/10', '26/10'], b11b: '27/10', kt: '28/10', lt1: ['29/10', '30/10'], lt2: ['31/10', '01/11'] });
+  PRESETS.k24 = makeBstd('24 (HN)', 'H.C.Nam', { d0: '24/09', cab: ['25/09', '01/11'], b3: ['24/09', '27/09'], b4a: ['28/09', '01/10'], b4b: ['02/10', '04/10'], b5: ['05/10', '07/10'], b9a: ['08/10', '11/10'], b8: ['12/10', '14/10'], b810: ['15/10', '18/10'], b9a10: ['19/10', '20/10'], b6a: ['21/10', '22/10'], b6b: ['23/10', '30/10'], b9b: '31/10', b11a: ['01/11', '02/11'], b11b: '03/11', kt: '04/11', lt1: ['05/11', '06/11'], lt2: ['07/11', '08/11'] }, { lap: '23/09' });
+  PRESETS.k25 = makeBstd('25 (HN)', 'V.N.Hiếu, C.Vinh, Hà', { d0: '08/10', cab: ['09/10', '15/11'], b3: ['08/10', '11/10'], b4a: ['12/10', '15/10'], b4b: ['16/10', '18/10'], b5: ['19/10', '21/10'], b9a: ['22/10', '25/10'], b8: ['26/10', '28/10'], b810: ['29/10', '01/11'], b9a10: ['02/11', '03/11'], b6a: ['04/11', '05/11'], b6b: ['06/11', '13/11'], b9b: '14/11', b11a: ['15/11', '16/11'], b11b: '17/11', kt: '18/11', lt1: ['19/11', '20/11'], lt2: ['21/11', '22/11'] });
+
+  /* ---------- Bss Khóa 21 (HN) ---------- */
+  PRESETS.k21s = {
+    ten: 'Khóa 21 (HN) · Bss', lap: '11/10', course: { khoa: '21 (HN)', hang: 'Bss', nam: 2026, hvLop: 5, hvThuc: 5, gioCa: 4, giaoVien: 'NQ.Tuấn' },
+    rows: [
+      ['A', 'A', 'Tập lái trên xe Tải hoặc xe Isuzu 7 chỗ'],
+      ['I', 'I', 'Tập lái xe trên xe ô tô được kê kích', 0.2, '', '12/10', '12/10', 'Sân tập lái CSHN', null, null, null, 2],
+      ['1', '1', 'Tập lái tại chỗ không nổ máy', 0.1, '', '12/10', '12/10', 'Sân tập lái CSHN', null, null, null, 1],
+      ['2', '2', 'Tập lái tại chỗ có nổ máy', 0.1, '', '12/10', '12/10', 'Sân tập lái CSHN', null, null, null, 1],
+      ['3', '7', 'Tập lái xe trên đường cao tốc và đường cao tốc phân kỳ đầu tư (Tập lái xe trên cabin học lái ô tô)', null, '', '13/10', '28/11', 'Cabin học lái ôtô Cơ sở Hoài Nhơn', null, null, null, null, '2 giờ/1hv (GVCN kiểm tra). Bố trí luyện tập bài Cao tốc'],
+      ['II', 'II', 'Tập lái xe trên sân tập lái'],
+      ['4', '3', 'Tập lái xe trong bài phẳng', 4, '', '12/10', '15/10', 'Sân tập lái CSHN', 20],
+      ['5', '4a', 'Tập lái xe trong hình số 3, số 8 ghép', 5, '', '16/10', '20/10', 'Sân tập lái CSHN', 15],
+      ['6', '4b', 'Tập lái xe tiến lùi theo hình chữ chi, ghép xe vào nơi đỗ', 4, '', '21/10', '24/10', 'Sân tập lái CSHN', 10],
+      ['7', '5', 'Tập lái xe trên đường bằng', 3, '', '25/10', '27/10', 'Sân tập lái CSHN', 30, 30],
+      ['III', 'III', 'Tập lái xe trên đường giao thông'],
+      ['8', '8', 'Tập lái xe trên đường dốc, đường vòng quanh co', 5, '', '28/10', '01/11', 'CSHN-Đèo Nhông-Phố Khánh', 90, 90],
+      ['9', '9a', 'Tập lái xe trên đường phức tạp', 4, '', '02/11', '05/11', 'CSHN-Đức Phổ', 100, 100],
+      ['B', '12', 'Tập lái xe trên đường với xe ôtô STĐ', 2, '', '06/11', '07/11', 'CSHN-Đức Phổ', 110, 110],
+      ['C', 'C', 'Chuyển tập lái xe con Vios'],
+      ['10', '10, 11', 'Tập lái xe trên đường có tải + TL ban đêm', 9, '', '08/11', '16/11', 'CSHN-Trung tâm', 100, null, 80],
+      ['11', '6a', 'Bài TL ghép xe vào nơi đỗ', 2, '', '17/11', '18/11', 'Sân tập lái CSHN', 10, 10],
+      ['12', '6b', 'Bài tập lái tổng hợp', 8, '', '19/11', '26/11', 'Sân tập lái CSHN', 19, 19],
+      ['13', '9b', 'Tập lái xe đường ph.tạp (T.phố + Q.đầu xe)', 2, '', '27/11', '28/11', 'CSHN-B.Sơn+Km1138-1140 (QL1A)', 50, 50],
+      ['14', '13a', 'Ôn luyện theo các nội dung sát hạch lái xe', 2, '', '29/11', '30/11', 'Sân tập lái CSHN', 19, 19],
+      ['15', '13b', 'Ôn luyện theo các nội dung sát hạch lái xe', 1, '', '01/12', '01/12', 'QL19B - ĐT640', 50, 50]
+    ],
+    moc: [
+      { ten: 'Kiểm tra xét hoàn thành khóa học (3h) (LT + C.chi + Hình TH + Đ.trường)', tu: '02/12', den: '02/12', noi: 'Sân tập lái CSHN' },
+      { ten: 'Luyện tập: Bài tập lái tổng hợp (Xe TB)', tu: '03/12', den: '05/12', noi: 'Trung tâm SH Nhơn Hội' },
+      { ten: 'Luyện tập: Tập lái xe trên đg phức tạp (Xe TB)', tu: '06/12', den: '08/12', noi: 'Trung tâm SH Nhơn Hội' }
+    ]
+  };
+
   // Kiểm tra mốc với lịch: tập hình trên xe Thaco phải nằm trong thời gian bài hình (6a/6b)
   function reviewMoc(rows, moc) {
     var out = [];
@@ -1672,16 +1743,23 @@ var Core = (function () {
     return out;
   }
 
+  // Lịch vắt qua năm mới (ví dụ C1 K21: 29/10 → 06/01): ngày nhỏ hơn ngày bắt đầu khóa quá 2 tháng là năm sau
+  function presetStart(p) { var y = p.course.nam; for (var i = 0; i < p.rows.length; i++) if (p.rows[i][5]) return d(p.rows[i][5], y); return null; }
+  function dRoll(s, p) {
+    var y = p.course.nam, v = d(s, y), st = presetStart(p);
+    if (v && st && diffDays(v, st) > 60) v = d(s, y + 1);
+    return v;
+  }
   function presetRows(key) {
-    var p = PRESETS[key], y = p.course.nam;
+    var p = PRESETS[key];
     return p.rows.map(function (a, i) {
-      return scheduleRow({ id: key + i, tt: a[0], bai: a[1], ten: a[2], soNgay: a[3], thu: a[4], tu: a[5] ? d(a[5], y) : null, den: a[6] ? d(a[6], y) : null,
+      return scheduleRow({ id: key + i, tt: a[0], bai: a[1], ten: a[2], soNgay: a[3], thu: a[4], tu: a[5] ? dRoll(a[5], p) : null, den: a[6] ? dRoll(a[6], p) : null,
         phamVi: a[7] || '', ca1: a[8], ca2: a[9], dem: a[10], gio: a[11], ghiChu: a[12] });
     });
   }
   function presetMoc(key) {
-    var p = PRESETS[key], y = p.course.nam;
-    return p.moc.map(function (m) { return { ten: m.ten, tu: d(m.tu, y), den: d(m.den, y), noi: m.noi }; });
+    var p = PRESETS[key];
+    return p.moc.map(function (m) { return { ten: m.ten, tu: dRoll(m.tu, p), den: dRoll(m.den, p), noi: m.noi }; });
   }
 
   return {
@@ -3364,7 +3442,7 @@ if (typeof module !== 'undefined') module.exports = Core;
 
 </script>
 
-<script>(function(){var V='20261016-1233';
+<script>(function(){var V='20261016-1243';
 if(!('serviceWorker' in navigator)||(location.protocol!=='https:'&&location.hostname!=='localhost'))return;
 navigator.serviceWorker.register('sw.js').then(function(r){r.update();});
 var had=!!navigator.serviceWorker.controller;
