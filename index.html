@@ -191,6 +191,16 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13px
 .mono{font-variant-numeric:tabular-nums;white-space:nowrap}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 @media (prefers-reduced-motion:no-preference){.toast{animation:in .25s ease-out}@keyframes in{from{transform:translateY(8px);opacity:.4}}}
+.fsbadge{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fsbadge.ok{border-color:var(--ok,#2e7d32);color:var(--ok,#2e7d32)}
+.fsbadge.warn{border-color:#c62828;color:#c62828}
+.fsnow{border:1px dashed var(--line);border-radius:8px;padding:10px 12px;line-height:1.6}
+.fsnow code{font-size:14px;background:rgba(0,0,0,.05);padding:1px 6px;border-radius:4px}
+.subh{font-size:16px;margin:16px 0 6px}
+.fstbl{width:100%;border-collapse:collapse;font-size:14px}
+.fstbl th,.fstbl td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:middle}
+.fstbl td.n{text-align:right;white-space:nowrap}
+.fstbl td.a{white-space:nowrap;text-align:right}
 </style>
 
 <header class="top">
@@ -200,6 +210,7 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13px
       <p class="sub">Lọc km/giờ DAT theo học viên · Dựng sổ nhật ký giảng dạy ô tô · Hội đồng 5 con soát lỗi</p>
     </div>
     <div class="spacer"></div>
+    <button class="btn sm fsbadge" id="fsBadge" title="Thư mục lưu file xuất và bản sao lưu">📁 Chọn thư mục lưu</button>
     <div class="today" id="todayLbl"></div>
   </div>
   <div class="lane" aria-hidden="true"></div>
@@ -210,7 +221,7 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13px
   <button role="tab" data-tab="so" aria-selected="false">② Sổ nhật ký</button>
   <button role="tab" data-tab="hd" aria-selected="false">③ Hội đồng 5 con <span class="badge" id="hdBadge" hidden></span></button>
   <button role="tab" data-tab="kt" aria-selected="false">④ Kiểm tra hoàn thành</button>
-  <button role="tab" data-tab="tq" aria-selected="false">⑤ Thói quen &amp; nhắc việc</button>
+  <button role="tab" data-tab="tq" aria-selected="false">⑤ Lưu trữ & Thói quen</button>
 </div></nav>
 
 <main>
@@ -458,6 +469,26 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13px
 
 <!-- ========== TAB 4: THÓI QUEN ========== -->
 <section data-pane="tq" class="col" hidden>
+  <div class="card" id="storeCard">
+    <h2>Thư mục lưu trữ &amp; sao lưu</h2>
+    <div class="fsnow" id="fsNow"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn pri" id="fsPick">📁 Chọn thư mục lưu</button>
+      <button class="btn" id="fsGrant" hidden>Cho phép truy cập lại thư mục</button>
+      <button class="btn" id="bkNow">💾 Sao lưu ngay</button>
+      <button class="btn" id="bkRestoreFile">↩ Khôi phục từ file…</button>
+      <input type="file" id="bkFile" accept=".json,application/json" hidden>
+    </div>
+    <label class="f" style="margin-top:10px">Đường dẫn đầy đủ (ghi để nhớ, ví dụ D:\SO_DAT)<input type="text" id="fsPathNote" placeholder="D:\SO_DAT"></label>
+    <div class="row" style="margin-top:6px;gap:14px">
+      <label><input type="checkbox" id="bkAuto" checked> Tự sao lưu mỗi ngày vào thư mục (giữ 30 bản gần nhất)</label>
+      <label><input type="checkbox" id="fsExport" checked> File Excel xuất ra lưu thẳng vào thư mục, chia theo khóa</label>
+    </div>
+    <h3 class="subh">Bản sao lưu</h3>
+    <div class="tbl-wrap"><table class="fstbl" id="bkTbl"></table></div>
+    <h3 class="subh">File Excel đã xuất</h3>
+    <div class="tbl-wrap"><table class="fstbl" id="exTbl"></table></div>
+  </div>
   <div class="card" id="aiCard">
     <h2>Kết nối Claude (đọc ảnh lịch, 5 con tranh luận)</h2>
     <p class="hint" id="aiStatus">Đang kiểm tra…</p>
@@ -1683,10 +1714,13 @@ if (typeof module !== 'undefined') module.exports = Core;
   var KEY = 'datso.v1';
   function load() { try { return JSON.parse(localStorage.getItem(KEY) || '{}'); } catch (e) { return {}; } }
   function save() {
+    if (RESTORING) return;
     try {
       localStorage.setItem(KEY, JSON.stringify({ habits: H, draft: { students: S.students, z: S.z, hang: S.hang, reqOver: S.reqOver, plates: S.plates, course: S.course, rows: S.rows, moc: S.moc, presetKey: S.presetKey, soMode: S.soMode, ao: S.ao, kt: S.kt, classes: S.classes, activeClass: S.activeClass, soPlate: S.soPlate, stdOpt: S.stdOpt } }));
     } catch (e) { /* bỏ qua */ }
+    if (typeof autoBackupSoon === 'function') autoBackupSoon();
   }
+  function save0() { var a = autoBackupSoon; autoBackupSoon = null; try { save(); } finally { autoBackupSoon = a; } }
   var saved = load();
 
   /* ---------------- Học thói quen ---------------- */
@@ -1913,7 +1947,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     }, function () { return { kind: aiCfg().key ? 'api' : null, images: !!aiCfg().key, json: apiJson }; });
   }
   var AI_ERR = { not_granted: 'Bạn chưa cho phép tool hỏi Claude.', rate_limited: 'Claude đang quá tải hoặc quá nhiều yêu cầu, thử lại sau ít phút.', invalid_json: 'Claude trả về không đúng dạng. Thử lại hoặc dùng ảnh rõ hơn.', image_rejected: 'Ảnh không hợp lệ (quá lớn hoặc sai định dạng).',
-    bad_key: 'Khoá API sai hoặc đã bị thu hồi. Vào tab ⑤ Thói quen → Kết nối Claude để nhập lại.', no_credit: 'Tài khoản API hết tiền. Nạp thêm ở console.anthropic.com → Billing.', offline: 'Không có mạng. Đọc ảnh cần mạng; các phần khác vẫn chạy offline.', cancelled: 'Đã dừng.', no_key: 'Chưa nhập khoá API.' };
+    bad_key: 'Khoá API sai hoặc đã bị thu hồi. Vào tab ⑤ Lưu trữ & Thói quen → Kết nối Claude để nhập lại.', no_credit: 'Tài khoản API hết tiền. Nạp thêm ở console.anthropic.com → Billing.', offline: 'Không có mạng. Đọc ảnh cần mạng; các phần khác vẫn chạy offline.', cancelled: 'Đã dừng.', no_key: 'Chưa nhập khoá API.' };
   function aiErrMsg(e) { return AI_ERR[e && e.code] || ('Lỗi khi hỏi Claude' + (e && e.msg ? ': ' + e.msg : (e && e.code ? ' (' + e.code + ')' : '')) + '.'); }
   function copyText(t) {
     if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t).then(function () { return true; }, function () { return fallbackCopy(t); });
@@ -2017,6 +2051,185 @@ if (typeof module !== 'undefined') module.exports = Core;
     });
   };
   $('#readImgManual').onclick = function () { manualAsk(IMG_PROMPT, 'img'); };
+
+  /* ---------------- Thư mục lưu trữ & sao lưu ---------------- */
+  var FSK = 'datso.fs';
+  function fsOpt() { try { return Object.assign({ auto: true, exp: true, note: '', lastBk: null, lastBkWhere: '' }, JSON.parse(localStorage.getItem(FSK) || '{}')); } catch (e) { return { auto: true, exp: true, note: '' }; } }
+  function fsOptSet(o) { try { localStorage.setItem(FSK, JSON.stringify(o)); } catch (e) { } }
+  var FS = { dir: null, perm: null, ok: typeof window.showDirectoryPicker === 'function' };
+  function idb(mode, fn) {
+    return new Promise(function (res, rej) {
+      try {
+        var rq = indexedDB.open('datso-fs', 1);
+        rq.onupgradeneeded = function () { rq.result.createObjectStore('h'); };
+        rq.onsuccess = function () { var db = rq.result, tx = db.transaction('h', mode), st = tx.objectStore('h'), r = fn(st); tx.oncomplete = function () { res(r && r.result); db.close(); }; tx.onerror = function () { rej(tx.error); }; };
+        rq.onerror = function () { rej(rq.error); };
+      } catch (e) { rej(e); }
+    });
+  }
+  function fsLoad() {
+    if (!FS.ok) return Promise.resolve();
+    return idb('readonly', function (st) { return st.get('dir'); }).then(function (h) {
+      if (!h) return; FS.dir = h;
+      return h.queryPermission({ mode: 'readwrite' }).then(function (p) { FS.perm = p; });
+    }).catch(function () { });
+  }
+  function fsBase() { var n = fsOpt().note; return n ? n.replace(/[\\/]+$/, '') : (FS.dir ? FS.dir.name : 'SO_DAT'); }
+  function fsReady() { return !!(FS.dir && FS.perm === 'granted'); }
+  function fsGrant() {
+    if (!FS.dir) return Promise.resolve(false);
+    return FS.dir.requestPermission({ mode: 'readwrite' }).then(function (p) { FS.perm = p; renderStore(); return p === 'granted'; }, function () { return false; });
+  }
+  function safeName(t) { return String(t || '').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'Chung'; }
+  function subDir(parts) {
+    var p = Promise.resolve(FS.dir);
+    parts.forEach(function (n) { p = p.then(function (d) { return d.getDirectoryHandle(n, { create: true }); }); });
+    return p;
+  }
+  function writeTo(parts, name, blob) {
+    return subDir(parts).then(function (d) { return d.getFileHandle(name, { create: true }); })
+      .then(function (fh) { return fh.createWritable(); })
+      .then(function (w) { return w.write(blob).then(function () { return w.close(); }); });
+  }
+  function khoaFolder() { var c = S.course || {}; return safeName((c.hang || S.hang || '') + (c.khoa ? '_K' + c.khoa : '')); }
+  function fsSaveExport(filename, blob) {
+    var o = fsOpt();
+    if (!fsReady() || !o.exp) return Promise.resolve(null);
+    var parts = ['Xuat_Excel', khoaFolder()];
+    return writeTo(parts, filename, blob).then(function () { renderStore(); return fsBase() + '\\' + parts.join('\\') + '\\' + filename; }, function () { return null; });
+  }
+  function nowTag() { var d = new Date(), z = function (n) { return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()) + '_' + z(d.getHours()) + z(d.getMinutes()) + z(d.getSeconds()); }
+  function backupBlob(kind) {
+    save0();
+    var data = load();
+    return new Blob([JSON.stringify({ app: 'datso', ver: 1, kind: kind, time: new Date().toISOString(), khoa: S.course && S.course.khoa, hang: S.course && S.course.hang, data: data }, null, 1)], { type: 'application/json' });
+  }
+  function noteBackup(where) { var o = fsOpt(); o.lastBk = new Date().toISOString(); o.lastBkWhere = where; fsOptSet(o); }
+  function backupNow(kind) {
+    kind = kind || 'tay';
+    var name = (kind === 'tudong' ? 'TuDong_' + nowTag().slice(0, 10) : kind === 'truockp' ? 'TruocKhoiPhuc_' + nowTag() : 'SaoLuu_' + nowTag()) + '.json';
+    var blob = backupBlob(kind);
+    if (fsReady()) return writeTo(['Sao_luu'], name, blob).then(function () {
+      noteBackup(fsBase() + '\\Sao_luu'); if (kind === 'tudong') pruneAuto();
+      renderStore(); return fsBase() + '\\Sao_luu\\' + name;
+    });
+    if (kind === 'tudong') return Promise.resolve(null);
+    return saveBlobDownload(blob, name).then(function () { noteBackup('Thư mục Tải về (Downloads)'); renderStore(); return 'Thư mục Tải về (Downloads)\\' + name; });
+  }
+  function pruneAuto() {
+    listDir(['Sao_luu']).then(function (fs) {
+      fs.filter(function (f) { return /^TuDong_/.test(f.name); }).sort(function (a, b) { return b.time - a.time; }).slice(30)
+        .forEach(function (f) { f.parent.removeEntry(f.name).catch(function () { }); });
+    });
+  }
+  var abT = null, abDay = null;
+  function autoBackupSoon() {
+    if (!fsReady() || !fsOpt().auto) return;
+    clearTimeout(abT);
+    abT = setTimeout(function () { backupNow('tudong').then(function () { abDay = nowTag().slice(0, 10); }).catch(function () { }); }, 8000);
+  }
+  function listDir(parts, deep) {
+    if (!fsReady()) return Promise.resolve([]);
+    var out = [];
+    function walk(d, rel, lvl) {
+      var it = d.values(), ps = [];
+      function next() {
+        return it.next().then(function (r) {
+          if (r.done) return Promise.all(ps);
+          var h = r.value;
+          if (h.kind === 'file') ps.push(h.getFile().then(function (f) { out.push({ name: h.name, rel: rel, size: f.size, time: f.lastModified, handle: h, parent: d }); }));
+          else if (deep && lvl < 2) ps.push(walk(h, rel ? rel + '\\' + h.name : h.name, lvl + 1));
+          return next();
+        });
+      }
+      return next();
+    }
+    return subDir(parts).then(function (d) { return walk(d, '', 0); }).then(function () { return out.sort(function (a, b) { return b.time - a.time; }); }, function () { return []; });
+  }
+  function kb(n) { return n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n / 1024) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
+  function dt(t) { var d = new Date(t); return C.fmtDMY(C.fromDateObj(d)) + ' ' + C.clock(d.getHours() * 60 + d.getMinutes()); }
+  var BK = [], EX = [];
+  function renderStore() {
+    var o = fsOpt(), b = $('#fsBadge'), now = $('#fsNow');
+    $('#bkAuto').checked = o.auto; $('#fsExport').checked = o.exp;
+    if (document.activeElement !== $('#fsPathNote')) $('#fsPathNote').value = o.note || '';
+    var path = FS.dir ? (o.note || FS.dir.name) : '';
+    b.className = 'btn sm fsbadge' + (fsReady() ? ' ok' : FS.dir ? ' warn' : '');
+    b.textContent = fsReady() ? '📁 ' + path : FS.dir ? '📁 Cần cho phép lại: ' + FS.dir.name : '📁 Chọn thư mục lưu';
+    $('#fsGrant').hidden = !(FS.dir && FS.perm !== 'granted');
+    $('#fsPick').textContent = FS.dir ? '📁 Đổi thư mục' : '📁 Chọn thư mục lưu';
+    $('#fsPick').disabled = !FS.ok;
+    var last = o.lastBk ? 'Lần sao lưu gần nhất: <b>' + esc(dt(o.lastBk)) + '</b> → <code>' + esc(o.lastBkWhere || '') + '</code>' : 'Chưa sao lưu lần nào.';
+    var lines = [];
+    if (!FS.ok) lines.push('Trình duyệt/chế độ này không cho chọn thư mục (chỉ Chrome/Edge trên máy tính, mở app cài từ GitHub). Sao lưu sẽ tải về <b>thư mục Tải về (Downloads)</b>.');
+    else if (!FS.dir) lines.push('Chưa chọn thư mục. Bấm <b>Chọn thư mục lưu</b> (ví dụ tạo thư mục <code>D:\\SO_DAT</code>). App sẽ tự tạo bên trong:');
+    else lines.push('Thư mục đang dùng: <b>' + esc(FS.dir.name) + '</b>' + (o.note ? ' · <code>' + esc(o.note) + '</code>' : '') + (FS.perm === 'granted' ? ' <span class="pill ok">đang kết nối</span>' : ' <span class="pill warn">cần bấm “Cho phép truy cập lại”</span>'));
+    if (FS.ok) lines.push('<code>' + esc(fsBase()) + '\\Sao_luu\\</code> bản sao lưu (SaoLuu_… bấm tay, TuDong_… mỗi ngày)<br><code>' + esc(fsBase()) + '\\Xuat_Excel\\' + esc(khoaFolder()) + '\\</code> file Excel xuất theo khóa');
+    lines.push('Dữ liệu đang làm việc nằm trong trình duyệt này (Chrome/Edge, đúng hồ sơ đang dùng). Xoá lịch sử duyệt web có thể mất, nên giữ bản sao lưu.');
+    lines.push(last);
+    now.innerHTML = lines.join('<br>');
+    if (!fsReady()) { BK = []; EX = []; drawTables(); return; }
+    Promise.all([listDir(['Sao_luu']), listDir(['Xuat_Excel'], true)]).then(function (r) { BK = r[0].filter(function (f) { return /\.json$/i.test(f.name); }); EX = r[1].slice(0, 40); drawTables(); });
+  }
+  function drawTables() {
+    var bkKind = function (n) { return /^TuDong_/.test(n) ? 'Tự động' : /^TruocKhoiPhuc_/.test(n) ? 'Trước khi khôi phục' : 'Bấm tay'; };
+    $('#bkTbl').innerHTML = BK.length ? '<tr><th>Tên file</th><th>Loại</th><th>Lúc lưu</th><th class="n">Dung lượng</th><th></th></tr>' + BK.map(function (f, i) {
+      return '<tr><td>' + esc(f.name) + '</td><td>' + bkKind(f.name) + '</td><td>' + esc(dt(f.time)) + '</td><td class="n">' + kb(f.size) + '</td><td class="a"><button class="btn sm" data-bkr="' + i + '">Khôi phục</button> <button class="btn sm ghost" data-bkd="' + i + '">Tải về</button> <button class="btn sm ghost" data-bkx="' + i + '">Xoá</button></td></tr>';
+    }).join('') : '<tr><td class="hint">' + (fsReady() ? 'Chưa có bản sao lưu trong thư mục. Bấm “Sao lưu ngay”.' : 'Chọn thư mục để xem danh sách. Bản đã tải về Downloads thì dùng “Khôi phục từ file…”.') + '</td></tr>';
+    $('#exTbl').innerHTML = EX.length ? '<tr><th>Thư mục</th><th>Tên file</th><th>Lúc lưu</th><th class="n">Dung lượng</th><th></th></tr>' + EX.map(function (f, i) {
+      return '<tr><td>' + esc('Xuat_Excel\\' + f.rel) + '</td><td>' + esc(f.name) + '</td><td>' + esc(dt(f.time)) + '</td><td class="n">' + kb(f.size) + '</td><td class="a"><button class="btn sm ghost" data-exd="' + i + '">Mở / tải</button></td></tr>';
+    }).join('') : '<tr><td class="hint">' + (fsReady() ? 'Chưa xuất file nào vào thư mục.' : 'Chưa chọn thư mục: file Excel đang tải về Downloads.') + '</td></tr>';
+  }
+  function restoreObj(obj, from) {
+    if (!obj || obj.app !== 'datso' || !obj.data) { toast('cun', 'File không đúng', 'Đây không phải file sao lưu của tool Sổ DAT.'); return; }
+    var info = (obj.hang || '') + (obj.khoa ? ' K' + obj.khoa : '') + ' · lưu lúc ' + dt(obj.time);
+    toast('cop', 'Khôi phục bản sao lưu?', from + ' (' + info + '). Dữ liệu hiện tại sẽ được sao lưu trước rồi thay bằng bản này.', [{ t: 'Khôi phục', f: function () {
+      var pre = fsReady() ? backupNow('truockp').catch(function () { }) : Promise.resolve();
+      pre.then(function () { try { localStorage.setItem(KEY, JSON.stringify(obj.data)); } catch (e) { } RESTORING = true; location.reload(); });
+    } }]);
+  }
+  var RESTORING = false;
+  function readJsonFile(f) { return f.text().then(function (t) { return JSON.parse(t); }); }
+  $('#fsPick').onclick = function () {
+    if (!FS.ok) return;
+    window.showDirectoryPicker({ id: 'datso', mode: 'readwrite', startIn: 'documents' }).then(function (h) {
+      FS.dir = h; FS.perm = 'granted';
+      return idb('readwrite', function (st) { return st.put(h, 'dir'); }).catch(function () { }).then(function () {
+        return Promise.all([subDir(['Sao_luu']), subDir(['Xuat_Excel'])]);
+      }).then(function () { return backupNow('tay'); }).then(function (w) {
+        act('Chọn thư mục lưu', h.name); renderStore();
+        toast('rong', 'Đã chọn thư mục ' + h.name, 'Đã tạo Sao_luu và Xuat_Excel bên trong, và sao lưu lần đầu: ' + w + '. Ghi đường dẫn đầy đủ vào ô bên dưới để dễ nhớ.', null, 12000);
+      });
+    }).catch(function (e) {
+      if (e && e.name === 'AbortError') return;
+      toast('cun', 'Không chọn được thư mục', e && e.name === 'SecurityError' ? 'Trong khung Claude không cho chọn thư mục. Mở app cài từ GitHub (Chrome/Edge) để dùng tính năng này.' : 'Chọn thư mục khác (không chọn ổ C:\\ gốc, Windows, Program Files).');
+    });
+  };
+  $('#fsGrant').onclick = function () { fsGrant().then(function (ok) { if (ok) toast('rong', 'Đã kết nối lại thư mục', FS.dir.name); }); };
+  $('#fsBadge').onclick = function () { if (FS.dir && FS.perm !== 'granted') { fsGrant(); return; } go('tq'); };
+  $('#bkNow').onclick = function () { backupNow('tay').then(function (w) { act('Sao lưu', w); toast('rong', 'Đã sao lưu', w); }, function () { toast('cun', 'Sao lưu chưa được', 'Thử bấm “Cho phép truy cập lại thư mục” rồi sao lưu lại.'); }); };
+  $('#bkRestoreFile').onclick = function () { $('#bkFile').click(); };
+  $('#bkFile').onchange = function () { var f = this.files[0]; this.value = ''; if (f) readJsonFile(f).then(function (o) { restoreObj(o, f.name); }, function () { toast('cun', 'File hỏng', 'Không đọc được ' + f.name + '.'); }); };
+  $('#bkAuto').onchange = function () { var o = fsOpt(); o.auto = this.checked; fsOptSet(o); };
+  $('#fsExport').onchange = function () { var o = fsOpt(); o.exp = this.checked; fsOptSet(o); renderStore(); };
+  $('#fsPathNote').onchange = function () { var o = fsOpt(); o.note = this.value.trim(); fsOptSet(o); renderStore(); };
+  $('#bkTbl').onclick = function (e) {
+    var t = e.target.closest('button'); if (!t) return;
+    var i = +(t.dataset.bkr || t.dataset.bkd || t.dataset.bkx), f = BK[i]; if (!f) return;
+    if (t.dataset.bkr != null) f.handle.getFile().then(readJsonFile).then(function (o) { restoreObj(o, f.name); });
+    else if (t.dataset.bkd != null) f.handle.getFile().then(function (b) { saveBlobDownload(b, f.name); });
+    else toast('cop', 'Xoá ' + f.name + '?', 'Xoá hẳn khỏi thư mục Sao_luu, không lấy lại được.', [{ t: 'Xoá', f: function () { f.parent.removeEntry(f.name).then(renderStore); } }]);
+  };
+  $('#exTbl').onclick = function (e) {
+    var t = e.target.closest('[data-exd]'); if (!t) return; var f = EX[+t.dataset.exd]; if (!f) return;
+    f.handle.getFile().then(function (b) { var u = URL.createObjectURL(b), a = document.createElement('a'); a.href = u; a.download = f.name; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(u); a.remove(); }, 2000); });
+  };
+  function backupReminder() {
+    var o = fsOpt(), days = o.lastBk ? (Date.now() - new Date(o.lastBk).getTime()) / 864e5 : null;
+    var hasData = S.rows.length || S.students.length || (S.classes && Object.keys(S.classes).length);
+    if (FS.dir && FS.perm !== 'granted') toast('heo', 'Thư mục lưu chưa mở khoá', 'Trình duyệt cần bạn cho phép lại mỗi lần mở app. Bấm một lần là xong.', [{ t: 'Cho phép', f: fsGrant }]);
+    else if (hasData && (days == null || days > 7)) toast('heo', days == null ? 'Chưa có bản sao lưu nào' : 'Đã ' + Math.floor(days) + ' ngày chưa sao lưu', 'Dữ liệu lớp, sổ, thói quen chỉ nằm trong trình duyệt. Sao lưu ra thư mục để khỏi mất.', [{ t: 'Sao lưu ngay', f: function () { $('#bkNow').click(); } }, { t: 'Chọn thư mục', f: function () { go('tq'); } }]);
+  }
 
   /* ---------------- Tính toán ---------------- */
   function reqFor(h) { return Object.assign({}, C.REQS[h] || C.REQS['Bstđ'], S.reqOver[h] || {}); }
@@ -2426,6 +2639,12 @@ if (typeof module !== 'undefined') module.exports = Core;
   function saveWb(wb, filename) {
     var data = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
     var blob = new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    return fsSaveExport(filename, blob).then(function (where) {
+      if (where) { toast('rong', 'Đã lưu file', where, [{ t: 'Xem thư mục lưu', f: function () { go('tq'); } }]); return; }
+      return saveBlobDownload(blob, filename);
+    });
+  }
+  function saveBlobDownload(blob, filename) {
     return downloadsP.then(function (dl) {
       if (dl) return dl.save({ filename: filename, data: blob }).then(function () { toast('rong', 'Đã lưu file', filename); }, function (e) {
         if (e && e.code === 'declined') return; toast('cun', 'Chưa lưu được file', (e && e.message) || 'Thử lại sau.');
@@ -3136,6 +3355,7 @@ if (typeof module !== 'undefined') module.exports = Core;
   $('#hvText').value = S.students.join('\n'); $('#zText').value = S.z.join('\n');
   syncReq(); renderCourse(); renderSched(); recompute();
   renderAiState();
+  fsLoad().then(function () { renderStore(); setTimeout(backupReminder, 2500); if (fsReady() && fsOpt().auto && (fsOpt().lastBk || '').slice(0, 10) !== new Date().toISOString().slice(0, 10)) backupNow('tudong').catch(function () { }); });
   if (learned('preset') || learned('hvLop')) {
     var Ls = Object.keys(H.counts).filter(function (k) { return learned(k); });
     if (Ls.length) toast('heo', 'Đã nạp thói quen', 'Đang dùng mặc định bạn hay chọn: ' + Ls.map(function (k) { return HABIT_LABEL[k] + ' = ' + fmtHabit(k, learned(k).v); }).join('; ') + '.');
@@ -3144,7 +3364,7 @@ if (typeof module !== 'undefined') module.exports = Core;
 
 </script>
 
-<script>(function(){var V='20261016-1128';
+<script>(function(){var V='20261016-1233';
 if(!('serviceWorker' in navigator)||(location.protocol!=='https:'&&location.hostname!=='localhost'))return;
 navigator.serviceWorker.register('sw.js').then(function(r){r.update();});
 var had=!!navigator.serviceWorker.controller;
