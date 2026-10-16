@@ -317,6 +317,7 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13px
         <div class="row"><img id="imgPrev" class="imgprev" alt="Ảnh lịch dạy vừa nạp">
           <div style="display:grid;gap:6px">
             <button class="btn pri" id="readImg">Đọc lịch từ ảnh</button>
+            <button class="btn" id="readImgManual" hidden>Chép lệnh &amp; mở Claude</button>
             <span class="hint" id="imgNote" style="margin:0;max-width:260px"></span>
           </div></div>
       </div>
@@ -416,6 +417,7 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13px
       <input type="text" id="aiTopic" style="flex:1 1 260px" placeholder="Chủ đề (tuỳ chọn), ví dụ: có nên bỏ dòng I khỏi sổ?">
       <button class="btn pri" id="aiGo">Bắt đầu tranh luận</button>
       <button class="btn" id="aiStop" hidden>Dừng</button>
+      <button class="btn" id="aiManual" hidden>Chép lệnh &amp; mở Claude</button>
     </div>
     <div class="ai-chat" id="aiChat"></div>
   </div>
@@ -456,6 +458,28 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13px
 
 <!-- ========== TAB 4: THÓI QUEN ========== -->
 <section data-pane="tq" class="col" hidden>
+  <div class="card" id="aiCard">
+    <h2>Kết nối Claude (đọc ảnh lịch, 5 con tranh luận)</h2>
+    <p class="hint" id="aiStatus">Đang kiểm tra…</p>
+    <div id="aiKeyBox">
+      <p class="hint">Dùng app ngoài Claude (bản cài từ GitHub) thì có 2 cách:<br>
+      <b>Cách 1 – Tự động:</b> dán khoá API Claude (lấy ở console.anthropic.com → API Keys). Dán ảnh vào app là tự đọc. API tính phí theo lượt, tách riêng gói Claude Pro.<br>
+      <b>Cách 2 – Miễn phí:</b> không nhập khoá. App chép sẵn lệnh, mở Claude; bạn gửi lệnh + ảnh trong Claude rồi copy kết quả, quay lại app bấm Ctrl+V.</p>
+      <div class="row">
+        <label class="f" style="flex:1 1 260px">Khoá API<input type="password" id="aiKey" placeholder="sk-ant-…" autocomplete="off"></label>
+        <label class="f">Mô hình<select id="aiModel">
+          <option value="claude-sonnet-5-5">Sonnet 5.5 (nhanh, rẻ)</option>
+          <option value="claude-opus-5-5">Opus 5.5 (đọc kỹ nhất)</option>
+          <option value="claude-haiku-5-5">Haiku 5.5 (rẻ nhất)</option>
+        </select></label>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn pri" id="aiSave">Lưu &amp; thử kết nối</button>
+        <button class="btn" id="aiForget">Xoá khoá</button>
+      </div>
+      <p class="hint" style="margin-top:6px">Khoá chỉ lưu trên trình duyệt máy này, gửi thẳng tới Anthropic, không qua GitHub hay máy chủ nào khác. Không dùng trên máy dùng chung.</p>
+    </div>
+  </div>
   <div class="card">
     <h2>Thói quen tool đã học</h2>
     <p class="hint">Giá trị bạn chọn từ 2 lần trở lên (và nhiều hơn các lựa chọn khác) sẽ thành mặc định. Khi bạn làm khác thói quen, Heo sẽ hỏi lại. Dữ liệu chỉ lưu trên trình duyệt này.</p>
@@ -1819,6 +1843,11 @@ if (typeof module !== 'undefined') module.exports = Core;
     act('Nạp file', name + ' → ' + info.kinds.join(', '));
   }
   function ingestText(text, hint) {
+    if (/^\s*(```|\[|\{)/.test(text) || /"rows"\s*:|"who"\s*:/.test(text)) {
+      var j = parseJsonLoose(text);
+      if (j && Array.isArray(j.rows)) { try { applyScheduleJson(j, 'dán từ Claude'); return true; } catch (e) { } }
+      if (Array.isArray(j) && j.some(function (t) { return t && C.PERSONA[t.who]; })) { renderDebate(j, 'dán từ Claude'); go('hd'); return true; }
+    }
     var rows = C.rowsFromText(text);
     var sh = { name: 'Dán', rows: rows };
     if (C.extractDAT(sh, 'Dán từ bộ nhớ') || C.extractStudents(sh) || C.extractSchedule(sh, S.course ? S.course.nam : 2026)) { ingestSheets([sh], 'Dán từ bộ nhớ'); recompute(); return true; }
@@ -1827,20 +1856,127 @@ if (typeof module !== 'undefined') module.exports = Core;
     return false;
   }
 
-  /* ---------------- Ảnh lịch → AI ---------------- */
+  /* ---------------- Kết nối AI: trong Claude → sample; ngoài Claude → khoá API hoặc chép lệnh ---------------- */
   var sampleP = (window.claude && window.claude.use) ? window.claude.use('sample') : Promise.resolve(null);
   var downloadsP = (window.claude && window.claude.use) ? window.claude.use('downloads') : Promise.resolve(null);
+  var AIKEY = 'datso.ai';
+  function aiCfg() { try { return JSON.parse(localStorage.getItem(AIKEY) || '{}') || {}; } catch (e) { return {}; } }
+  function aiCfgSet(c) { try { if (c) localStorage.setItem(AIKEY, JSON.stringify(c)); else localStorage.removeItem(AIKEY); } catch (e) { } }
+  function parseJsonLoose(t) {
+    t = String(t || '').replace(/```(?:json)?/gi, '').trim();
+    try { return JSON.parse(t); } catch (e) { }
+    var i = t.search(/[\[{]/); if (i < 0) return null;
+    var close = t[i] === '[' ? ']' : '}', k = t.lastIndexOf(close);
+    if (k <= i) return null;
+    try { return JSON.parse(t.slice(i, k + 1)); } catch (e) { return null; }
+  }
+  function imgToB64(f) {
+    return new Promise(function (res, rej) {
+      var url = URL.createObjectURL(f), im = new Image();
+      im.onload = function () {
+        var M = 2000, w = im.naturalWidth, h = im.naturalHeight, k = Math.min(1, M / Math.max(w, h));
+        var cv = document.createElement('canvas'); cv.width = Math.round(w * k); cv.height = Math.round(h * k);
+        var g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height); g.drawImage(im, 0, 0, cv.width, cv.height);
+        URL.revokeObjectURL(url);
+        res({ type: 'image/jpeg', data: cv.toDataURL('image/jpeg', 0.92).split(',')[1] });
+      };
+      im.onerror = function () { URL.revokeObjectURL(url); rej({ code: 'image_rejected' }); };
+      im.src = url;
+    });
+  }
+  function apiJson(prompt, o) {
+    o = o || {}; var cfg = aiCfg();
+    if (!cfg.key) return Promise.reject({ code: 'no_key' });
+    return Promise.all((o.images || []).map(imgToB64)).then(function (imgs) {
+      var content = imgs.map(function (im) { return { type: 'image', source: { type: 'base64', media_type: im.type, data: im.data } }; });
+      content.push({ type: 'text', text: prompt + '\nChỉ trả về JSON hợp lệ, không bọc trong ``` và không thêm lời giải thích.' });
+      return fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST', signal: o.signal,
+        headers: { 'content-type': 'application/json', 'x-api-key': cfg.key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+        body: JSON.stringify({ model: cfg.model || 'claude-sonnet-5-5', max_tokens: o.maxTokens || 16000, messages: [{ role: 'user', content: content }] })
+      });
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw { code: r.status === 401 || r.status === 403 ? 'bad_key' : r.status === 429 || r.status === 529 ? 'rate_limited' : r.status === 400 && /credit|billing/i.test((j.error && j.error.message) || '') ? 'no_credit' : 'api', msg: (j.error && j.error.message) || ('HTTP ' + r.status) };
+        var out = parseJsonLoose((j.content || []).map(function (c) { return c.text || ''; }).join(''));
+        if (out == null) throw { code: 'invalid_json' };
+        return out;
+      });
+    }, function (e) { if (e && e.name === 'AbortError') throw { code: 'cancelled' }; if (e && e.code) throw e; throw { code: 'offline' }; });
+  }
+  // provider: {kind:'claude'|'api'|null, images:bool, json(prompt,o)}
+  function aiProvider() {
+    return sampleP.then(function (sp) {
+      if (sp) return sp.limits().then(function (l) { return { kind: 'claude', images: !!l.images, json: function (p, o) { return sp.json(p, o); } }; }, function () { return { kind: 'claude', images: false, json: function (p, o) { return sp.json(p, o); } }; });
+      if (aiCfg().key) return { kind: 'api', images: true, json: apiJson };
+      return { kind: null, images: false };
+    }, function () { return { kind: aiCfg().key ? 'api' : null, images: !!aiCfg().key, json: apiJson }; });
+  }
+  var AI_ERR = { not_granted: 'Bạn chưa cho phép tool hỏi Claude.', rate_limited: 'Claude đang quá tải hoặc quá nhiều yêu cầu, thử lại sau ít phút.', invalid_json: 'Claude trả về không đúng dạng. Thử lại hoặc dùng ảnh rõ hơn.', image_rejected: 'Ảnh không hợp lệ (quá lớn hoặc sai định dạng).',
+    bad_key: 'Khoá API sai hoặc đã bị thu hồi. Vào tab ⑤ Thói quen → Kết nối Claude để nhập lại.', no_credit: 'Tài khoản API hết tiền. Nạp thêm ở console.anthropic.com → Billing.', offline: 'Không có mạng. Đọc ảnh cần mạng; các phần khác vẫn chạy offline.', cancelled: 'Đã dừng.', no_key: 'Chưa nhập khoá API.' };
+  function aiErrMsg(e) { return AI_ERR[e && e.code] || ('Lỗi khi hỏi Claude' + (e && e.msg ? ': ' + e.msg : (e && e.code ? ' (' + e.code + ')' : '')) + '.'); }
+  function copyText(t) {
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t).then(function () { return true; }, function () { return fallbackCopy(t); });
+    return Promise.resolve(fallbackCopy(t));
+  }
+  function fallbackCopy(t) { try { var ta = document.createElement('textarea'); ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); var ok = document.execCommand('copy'); ta.remove(); return ok; } catch (e) { return false; } }
+  function manualAsk(prompt, what) {
+    var full = prompt + '\n\nChỉ trả lời bằng JSON trong một khối code, không giải thích.';
+    copyText(full).then(function (ok) {
+      try { window.open('https://claude.ai/new', '_blank', 'noopener'); } catch (e) { }
+      toast('heo', ok ? 'Đã chép lệnh, mở Claude' : 'Không chép tự động được',
+        ok ? ('Trong Claude: bấm Ctrl+V để dán lệnh' + (what === 'img' ? ', đính kèm ảnh lịch' : '') + ', rồi gửi. Claude trả lời xong, bấm nút Copy dưới câu trả lời, quay lại app bấm Ctrl+V là xong.')
+          : 'Trình duyệt chặn bộ nhớ tạm. Mở Claude và gửi kèm ảnh; kết quả copy về app rồi Ctrl+V.', null, 15000);
+    });
+  }
+  function renderAiState() {
+    aiProvider().then(function (pv) {
+      var st = $('#aiStatus'), kb = $('#aiKeyBox');
+      if (st) st.innerHTML = pv.kind === 'claude' ? '<b>Đang chạy trong Claude</b>: đọc ảnh và tranh luận dùng trực tiếp Claude, không cần khoá.'
+        : pv.kind === 'api' ? '<b>Đã kết nối bằng khoá API</b> (' + esc(aiCfg().model || 'claude-sonnet-5-5') + '). Dán ảnh lịch vào app là tự đọc.'
+        : '<b>Chưa kết nối.</b> Đang dùng cách chép lệnh sang Claude (miễn phí, thêm vài thao tác).';
+      if (kb) kb.hidden = pv.kind === 'claude';
+      var c = aiCfg(); if ($('#aiModel')) $('#aiModel').value = c.model || 'claude-sonnet-5-5';
+      if ($('#aiKey')) $('#aiKey').placeholder = c.key ? 'Đã lưu khoá …' + c.key.slice(-4) : 'sk-ant-…';
+      // nút ở tab sổ và hội đồng
+      $('#readImgManual').hidden = !!pv.kind;
+      $('#readImg').hidden = !pv.kind;
+      $('#aiManual').hidden = !!pv.kind; $('#aiGo').hidden = !pv.kind;
+      $('#aiNote').textContent = pv.kind ? 'Gửi bản tóm tắt số liệu hiện tại cho Claude để 5 con tranh luận tự do, mỗi con một hướng.'
+        : 'Chưa kết nối Claude: bấm "Chép lệnh & mở Claude", gửi trong Claude, copy kết quả rồi quay lại đây bấm Ctrl+V. Hoặc nhập khoá API ở tab ⑤ để chạy tự động.';
+      if (S.image) setImageNote(pv);
+    });
+  }
+  function setImageNote(pv) {
+    $('#readImg').disabled = !pv.images;
+    $('#imgNote').textContent = pv.kind === 'api' ? 'Đang đọc ảnh bằng khoá API của bạn…'
+      : pv.kind === 'claude' ? (pv.images ? 'Claude sẽ chép bảng trong ảnh thành lịch. Kiểm tra lại từng dòng sau khi đọc.' : 'Phiên này chưa cho gửi ảnh. Dán bảng từ Excel thay thế.')
+      : 'Chưa kết nối Claude. Bấm "Chép lệnh & mở Claude" → trong Claude dán lệnh + đính kèm ảnh → copy kết quả → quay lại đây Ctrl+V.';
+  }
+  $('#aiSave').onclick = function () {
+    var k = ($('#aiKey').value || '').trim(), c = aiCfg();
+    if (k) c.key = k; c.model = $('#aiModel').value;
+    if (!c.key) { toast('cun', 'Chưa có khoá', 'Dán khoá API (bắt đầu bằng sk-ant-) vào ô Khoá API.'); return; }
+    if (!/^sk-ant-/.test(c.key)) toast('cun', 'Khoá trông lạ', 'Khoá API Claude thường bắt đầu bằng sk-ant-. Vẫn thử kết nối.');
+    aiCfgSet(c); $('#aiKey').value = ''; this.disabled = true; var btn = this;
+    $('#aiStatus').textContent = 'Đang thử kết nối…';
+    apiJson('Trả về đúng JSON {"ok":true}', { maxTokens: 50 }).then(function (j) {
+      toast('rong', 'Kết nối Claude thành công', 'Từ giờ dán ảnh lịch vào tab Sổ nhật ký là tự đọc.'); act('Kết nối AI', c.model);
+    }).catch(function (e) { toast('cun', 'Kết nối chưa được', aiErrMsg(e), null, 12000); })
+      .then(function () { btn.disabled = false; renderAiState(); });
+  };
+  $('#aiForget').onclick = function () { aiCfgSet(null); $('#aiKey').value = ''; renderAiState(); toast('heo', 'Đã xoá khoá API', 'App quay về cách chép lệnh sang Claude.'); };
+
   function setImage(f) {
     S.image = f; $('#imgBox').hidden = false;
     try { $('#imgPrev').src = URL.createObjectURL(f); } catch (e) { }
     $('#imgNote').textContent = 'Đang kiểm tra khả năng đọc ảnh…';
-    sampleP.then(function (sp) {
-      if (!sp) { $('#readImg').disabled = true; $('#imgNote').textContent = 'Đọc ảnh cần mở tool trong Claude. Ngoài Claude: dán bảng lịch từ Excel hoặc dùng mẫu có sẵn.'; return; }
-      return sp.limits().then(function (l) {
-        $('#readImg').disabled = !l.images;
-        $('#imgNote').textContent = l.images ? 'Claude sẽ chép bảng trong ảnh thành lịch. Kiểm tra lại từng dòng sau khi đọc.' : 'Phiên này chưa cho gửi ảnh. Dán bảng từ Excel thay thế.';
-      });
-    }).catch(function () { $('#readImg').disabled = true; });
+    aiProvider().then(function (pv) {
+      $('#readImgManual').hidden = !!pv.kind; $('#readImg').hidden = !pv.kind;
+      setImageNote(pv);
+      if (pv.kind === 'api') $('#readImg').click();   // ngoài Claude có khoá: dán ảnh là tự đọc
+      else if (pv.kind === 'claude') $('#imgNote').textContent = pv.images ? 'Bấm "Đọc lịch từ ảnh" để Claude chép bảng thành lịch.' : $('#imgNote').textContent;
+    });
   }
   var IMG_PROMPT = [
     'Ảnh là LỊCH DẠY THỰC HÀNH LÁI XE Ô TÔ của một cơ sở đào tạo lái xe ở Việt Nam. Chép bảng thành JSON, không giải thích.',
@@ -1853,31 +1989,34 @@ if (typeof module !== 'undefined') module.exports = Core;
     'Các dòng "Kiểm tra xét hoàn thành khóa học", "Luyện tập", "Đăng ký sát hạch" đưa vào moc, không đưa vào rows.',
     'Ghi chú chữ nghiêng (ví dụ "2 giờ/1hv…", "T.lái b.đêm: 4h/hv") đưa vào ghiChu của dòng đó. Ô trống là null. Không đoán số không đọc được: để null.'
   ].join('\n');
+  function applyScheduleJson(j, src) {
+    if (!j || !Array.isArray(j.rows)) throw { code: 'invalid_json' };
+    var y = +j.nam || (S.course && S.course.nam) || 2026;
+    S.rows = j.rows.map(function (r) {
+      return C.scheduleRow({ tt: String(r.tt || ''), bai: String(r.bai || ''), ten: r.ten, soNgay: C.num(r.soNgay), thu: r.thu || '', tu: C.parseDate(r.tu, y), den: C.parseDate(r.den, y),
+        phamVi: r.phamVi || '', ca1: C.num(r.ca1), ca2: C.num(r.ca2), dem: C.num(r.dem), gio: C.num(r.gio), ghiChu: r.ghiChu || '' });
+    });
+    S.moc = (j.moc || []).map(function (m) { var t = C.parseDate(m.tu, y); return { ten: m.ten, tu: t, den: C.parseDate(m.den, y) || t, noi: m.noi || '' }; }).filter(function (m) { return m.tu; });
+    var hg = /c1/i.test(j.hang || '') ? 'C1' : /ss/i.test(j.hang || '') ? 'Bss' : 'Bstđ';
+    S.course = defaultCourse(Object.assign({}, S.course, { khoa: j.khoa || '', hang: hg, nam: y, hvLop: +j.hvLop || (S.course && S.course.hvLop) || 5, giaoVien: j.giaoVien || '' }));
+    S.course.hvThuc = Math.min(S.course.hvThuc || S.course.hvLop, S.course.hvLop);
+    S.presetKey = null; applyLearnedRows();
+    $('#imgNote').textContent = 'Đã đọc ' + S.rows.length + ' dòng. Hội đồng đang soát; kiểm tra lại ngày và km.';
+    act('Đọc ảnh lịch', S.rows.length + ' dòng' + (src ? ' (' + src + ')' : '')); recompute(); renderCourse(); renderSched();
+    go('so');
+    toast('cun', 'Đọc xong ảnh lịch', 'Máy đọc ảnh có thể nhầm số. Dò lại cột Từ/Đến và km với ảnh gốc trước khi xuất sổ.');
+  }
   $('#readImg').onclick = function () {
     var btn = this;
-    sampleP.then(function (sp) {
-      if (!sp || !S.image) return;
+    aiProvider().then(function (pv) {
+      if (!pv.kind || !S.image) return;
       btn.disabled = true; $('#imgNote').textContent = 'Claude đang đọc ảnh, thường mất 20–60 giây…';
-      sp.json(IMG_PROMPT, { images: [S.image], modelTier: 'complex' }).then(function (j) {
-        if (!j || !Array.isArray(j.rows)) throw { code: 'invalid_json' };
-        var y = +j.nam || (S.course && S.course.nam) || 2026;
-        S.rows = j.rows.map(function (r) {
-          return C.scheduleRow({ tt: String(r.tt || ''), bai: String(r.bai || ''), ten: r.ten, soNgay: C.num(r.soNgay), thu: r.thu || '', tu: C.parseDate(r.tu, y), den: C.parseDate(r.den, y),
-            phamVi: r.phamVi || '', ca1: C.num(r.ca1), ca2: C.num(r.ca2), dem: C.num(r.dem), gio: C.num(r.gio), ghiChu: r.ghiChu || '' });
-        });
-        S.moc = (j.moc || []).map(function (m) { var t = C.parseDate(m.tu, y); return { ten: m.ten, tu: t, den: C.parseDate(m.den, y) || t, noi: m.noi || '' }; }).filter(function (m) { return m.tu; });
-        S.course = defaultCourse(Object.assign({}, S.course, { khoa: j.khoa || '', hang: /ss/i.test(j.hang || '') ? 'Bss' : 'Bstđ', nam: y, hvLop: +j.hvLop || 5, giaoVien: j.giaoVien || '' }));
-        S.course.hvThuc = Math.min(S.course.hvThuc || S.course.hvLop, S.course.hvLop);
-        S.presetKey = null; applyLearnedRows();
-        $('#imgNote').textContent = 'Đã đọc ' + S.rows.length + ' dòng. Hội đồng đang soát; kiểm tra lại ngày và km.';
-        act('Đọc ảnh lịch', S.rows.length + ' dòng'); recompute(); renderCourse(); renderSched();
-        toast('cun', 'Đọc xong ảnh lịch', 'Máy đọc ảnh có thể nhầm số. Dò lại cột Từ/Đến và km với ảnh gốc trước khi xuất sổ.');
-      }).catch(function (e) {
-        var m = { not_granted: 'Bạn chưa cho phép tool hỏi Claude.', rate_limited: 'Đang quá nhiều yêu cầu, thử lại sau ít phút.', invalid_json: 'Claude trả về không đúng dạng bảng. Thử ảnh rõ hơn hoặc dán bảng từ Excel.', image_rejected: 'Ảnh không hợp lệ (quá lớn hoặc sai định dạng).' };
-        $('#imgNote').textContent = m[e && e.code] || ('Không đọc được ảnh (' + ((e && e.code) || 'lỗi') + ').');
-      }).then(function () { btn.disabled = false; });
+      return pv.json(IMG_PROMPT, { images: [S.image], modelTier: 'complex' }).then(function (j) { applyScheduleJson(j, pv.kind === 'api' ? 'khoá API' : 'Claude'); })
+        .catch(function (e) { $('#imgNote').textContent = aiErrMsg(e); })
+        .then(function () { btn.disabled = false; });
     });
   };
+  $('#readImgManual').onclick = function () { manualAsk(IMG_PROMPT, 'img'); };
 
   /* ---------------- Tính toán ---------------- */
   function reqFor(h) { return Object.assign({}, C.REQS[h] || C.REQS['Bstđ'], S.reqOver[h] || {}); }
@@ -2232,12 +2371,7 @@ if (typeof module !== 'undefined') module.exports = Core;
       thoiQuen: Object.keys(H.counts).map(function (k) { var L = learned(k); return (HABIT_LABEL[k] || k) + (L ? ' = ' + fmtHabit(k, L.v) : ''); })
     };
   }
-  sampleP.then(function (sp) {
-    if (!sp) { $('#aiGo').disabled = true; $('#aiNote').textContent = 'Phiên tranh luận trực tiếp chỉ chạy khi mở tool trong Claude. Phần soát lỗi bên trên vẫn chạy đầy đủ khi dùng ngoài Claude.'; }
-  });
-  $('#aiGo').onclick = function () {
-    sampleP.then(function (sp) {
-      if (!sp) return;
+  function debatePrompt() {
       var topic = C.nfc($('#aiTopic').value);
       var prompt = [
         'Bạn điều phối một cuộc tranh luận giữa 5 nhân vật trong một tool quản lý đào tạo lái xe ô tô ở Việt Nam (lọc dữ liệu DAT, lập sổ nhật ký giảng dạy).',
@@ -2254,20 +2388,27 @@ if (typeof module !== 'undefined') module.exports = Core;
         'Kết thúc: mỗi nhân vật một lượt "de-xuat" cuối, vẫn giữ quan điểm riêng. Nếu nói về quy định, nói rõ là cần kiểm tra lại văn bản hiện hành.',
         'Chỉ trả về JSON: [{"who":"cun","to":"heo","diem":"sai","text":"..."}]'
       ].join('\n');
+      return { topic: topic, prompt: prompt };
+  }
+  function renderDebate(turns, topic) {
+    if (!Array.isArray(turns) || !turns.some(function (t) { return t && C.PERSONA[t.who]; })) throw { code: 'invalid_json' };
+    $('#aiChat').innerHTML = turns.filter(function (t) { return t && C.PERSONA[t.who]; }).map(function (t) {
+      var p = C.PERSONA[t.who], to = C.PERSONA[t.to];
+      var kl = { sai: 'điểm sai', 'toi-uu': 'tối ưu', 'de-xuat': 'đề xuất' }[t.diem] || '';
+      return '<div class="msg ai-turn p-' + t.who + '"><div class="ava" aria-hidden="true">' + EMO[t.who] + '</div><div class="b"><div class="who">' + p.ten + (to ? ' <small>→ ' + to.ten + '</small>' : '') + (kl ? '<span class="kind ' + esc(t.diem) + '">' + kl + '</span>' : '') + '</div><div class="d">' + esc(t.text) + '</div></div></div>';
+    }).join('');
+    act('Tranh luận AI', topic || 'chung');
+  }
+  $('#aiManual').onclick = function () { manualAsk(debatePrompt().prompt, 'debate'); };
+  $('#aiGo').onclick = function () {
+    aiProvider().then(function (pv) {
+      if (!pv.kind) return;
+      var dp = debatePrompt(), topic = dp.topic, prompt = dp.prompt;
       aiCtl = new AbortController();
       $('#aiGo').disabled = true; $('#aiStop').hidden = false;
       $('#aiChat').innerHTML = '<div class="hint">Đang mời 5 con vào phòng họp… (20–60 giây)</div>';
-      sp.json(prompt, { signal: aiCtl.signal, cache: false }).then(function (turns) {
-        if (!Array.isArray(turns)) throw { code: 'invalid_json' };
-        $('#aiChat').innerHTML = turns.filter(function (t) { return C.PERSONA[t.who]; }).map(function (t) {
-          var p = C.PERSONA[t.who], to = C.PERSONA[t.to];
-          var kl = { sai: 'điểm sai', 'toi-uu': 'tối ưu', 'de-xuat': 'đề xuất' }[t.diem] || '';
-          return '<div class="msg ai-turn p-' + t.who + '"><div class="ava" aria-hidden="true">' + EMO[t.who] + '</div><div class="b"><div class="who">' + p.ten + (to ? ' <small>→ ' + to.ten + '</small>' : '') + (kl ? '<span class="kind ' + esc(t.diem) + '">' + kl + '</span>' : '') + '</div><div class="d">' + esc(t.text) + '</div></div></div>';
-        }).join('');
-        act('Tranh luận AI', topic || 'chung');
-      }).catch(function (e) {
-        var m = { cancelled: 'Đã dừng.', not_granted: 'Bạn chưa cho phép tool hỏi Claude.', rate_limited: 'Đang quá nhiều yêu cầu, thử lại sau ít phút.', invalid_json: 'Câu trả lời không đúng dạng, bấm lại để thử lần nữa.' };
-        $('#aiChat').innerHTML = '<div class="hint">' + esc(m[e && e.code] || 'Không mở được phiên tranh luận (' + ((e && e.code) || 'lỗi') + ').') + '</div>';
+      pv.json(prompt, { signal: aiCtl.signal, cache: false }).then(function (turns) { renderDebate(turns, topic); }).catch(function (e) {
+        $('#aiChat').innerHTML = '<div class="hint">' + esc(aiErrMsg(e)) + '</div>';
       }).then(function () { $('#aiGo').disabled = false; $('#aiStop').hidden = true; });
     });
   };
@@ -2994,6 +3135,7 @@ if (typeof module !== 'undefined') module.exports = Core;
   $('#todayLbl').textContent = 'Hôm nay ' + C.thu(TODAY) + ', ' + C.fmtDMY(TODAY);
   $('#hvText').value = S.students.join('\n'); $('#zText').value = S.z.join('\n');
   syncReq(); renderCourse(); renderSched(); recompute();
+  renderAiState();
   if (learned('preset') || learned('hvLop')) {
     var Ls = Object.keys(H.counts).filter(function (k) { return learned(k); });
     if (Ls.length) toast('heo', 'Đã nạp thói quen', 'Đang dùng mặc định bạn hay chọn: ' + Ls.map(function (k) { return HABIT_LABEL[k] + ' = ' + fmtHabit(k, learned(k).v); }).join('; ') + '.');
@@ -3002,7 +3144,7 @@ if (typeof module !== 'undefined') module.exports = Core;
 
 </script>
 
-<script>(function(){var V='20261016-1120';
+<script>(function(){var V='20261016-1128';
 if(!('serviceWorker' in navigator)||(location.protocol!=='https:'&&location.hostname!=='localhost'))return;
 navigator.serviceWorker.register('sw.js').then(function(r){r.update();});
 var had=!!navigator.serviceWorker.controller;
