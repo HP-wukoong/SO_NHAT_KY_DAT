@@ -1154,10 +1154,18 @@ var Core = (function () {
           if (unit.date && unit.date !== date) moves.push({ bai: dayInfo.bai, ten: dayInfo.ten, from: unit.date, to: date });
         }
         if (dd.stdSes.length && stdRow) {
-          var ss = dd.stdSes, a0 = Math.min.apply(null, ss.map(function (x) { return x.start; }));
-          var stdMin = Math.round(dd.stdMin), kmS = roundKm(dd.stdKm);
-          var sl = mk(date, { rowId: stdRow.id, bai: stdRow.bai, ten: stdRow.ten, phamVi: stdRow.phamVi, road: true, planDate: stdRow.tu }, stdMin, kmS, 'dat', { k: a0 >= 1080 ? 'dem' : (a0 < 720 ? 'ca1' : 'ca2'), start: a0, end: a0 + stdMin, km: kmS, real: true }, { isStd: true, plate: ss[0].plate });
-          if (!hasDay && !hasNight) { sl.datSessions = dd.ses; sl.datKm = dd.km; sl.datH = dd.h; }
+          // xe số tự động: tách theo ca thực tế (sáng / chiều / đêm), giờ lấy đúng phiên DAT
+          var gS = {};
+          dd.stdSes.forEach(function (x) { var kk = x.start >= 1080 || x.start < 300 ? 'dem' : x.start < 720 ? 'ca1' : 'ca2'; (gS[kk] = gS[kk] || []).push(x); });
+          var firstStd = null;
+          ['ca1', 'ca2', 'dem'].forEach(function (kk) {
+            var ss = gS[kk]; if (!ss) return;
+            var a0 = Math.min.apply(null, ss.map(function (x) { return x.start; })), b0 = Math.max.apply(null, ss.map(function (x) { return x.end; }));
+            var mS = Math.round(ss.reduce(function (t, x) { return t + (x.end - x.start > 0 ? x.end - x.start : x.h * 60); }, 0)), kmS = roundKm(ss.reduce(function (t, x) { return t + x.km; }, 0));
+            var sl = mk(date, { rowId: stdRow.id, bai: stdRow.bai, ten: stdRow.ten, phamVi: stdRow.phamVi, road: true, planDate: stdRow.tu }, mS, kmS, 'dat', { k: kk, start: a0, end: Math.max(b0, a0 + mS), km: kmS, real: true }, { isStd: true, plate: ss[0].plate, part: Object.keys(gS).length > 1 ? (kk === 'ca1' ? 'sáng' : kk === 'ca2' ? 'chiều' : 'đêm') : '' });
+            if (!firstStd) firstStd = sl;
+          });
+          if (!hasDay && !hasNight && firstStd) { firstStd.datSessions = dd.ses; firstStd.datKm = dd.km; firstStd.datH = dd.h; }
         }
         if (hasNight) {
           var nb = combo ? baiTokens(unit.bai).slice(-1)[0] : nightDefault.bai;
@@ -2439,9 +2447,30 @@ if (typeof module !== 'undefined') module.exports = Core;
   function req() { return reqFor(S.hang); }
   function plateType(k) {
     var r = S.plates[k], v = fleetOf(k);
-    if (r && r.typeManual) return r.type;
+    if (r && (r.typeManual || (r.typeManual == null && r.type && r.type !== 'std'))) return r.type;
     if (v) return v.type;
-    return (r && r.type) || 'std';
+    return inferType(k);
+  }
+  // Xe chưa có trong sổ xe: đoán theo hạng lớp. Lớp Bss/C1 nhiều xe: xe học viên lớp chạy ít nhất (dưới 35% giờ) là xe số tự động.
+  var INF = { key: '', map: {} };
+  function inferType(k) {
+    var hang = (S.course && S.course.hang) || S.hang, pl = loadedPlates();
+    var key = hang + '|' + pl.join(',') + '|' + S.sessions.length + '|' + S.students.length;
+    if (INF.key !== key) {
+      var m = {}, main = hang === 'C1' ? 'c1' : hang === 'Bss' ? 'ssTai' : 'std';
+      if (main !== 'std') {
+        var hv = {}; S.students.forEach(function (n) { hv[C.up(n)] = 1; });
+        var mins = {}, tot = 0;
+        S.sessions.forEach(function (x) { if (!hv[C.up(x.name)]) return; var d = (x.hours || 0) * 60; mins[x.plate] = (mins[x.plate] || 0) + d; tot += d; });
+        var unknown = pl.filter(function (p) { return !fleetOf(p); });
+        var hasStd = pl.some(function (p) { var v = fleetOf(p); return v && v.type === 'std'; });
+        var low = unknown.slice().sort(function (a, b) { return (mins[a] || 0) - (mins[b] || 0); })[0];
+        unknown.forEach(function (p) { m[p] = main; });
+        if (!hasStd && pl.length >= 2 && low && tot > 0 && (mins[low] || 0) / tot < 0.35) m[low] = 'std';
+      }
+      INF = { key: key, map: m };
+    }
+    return INF.map[k] || ((hang === 'C1') ? 'c1' : hang === 'Bss' ? 'ssTai' : 'std');
   }
   function plateTypeMap() { var m = {}; Object.keys(S.plates).concat(loadedPlates()).forEach(function (k) { m[k] = plateType(k); }); return m; }
   function loadedPlates() { var p = {}; S.sessions.forEach(function (s) { p[s.plate] = 1; }); return Object.keys(p); }
@@ -2463,6 +2492,10 @@ if (typeof module !== 'undefined') module.exports = Core;
     FINDINGS = [];
     if (AN) FINDINGS = FINDINGS.concat(C.reviewDAT(AN, { req: req() }));
     if (AN && FLEET) FINDINGS = FINDINGS.concat(C.reviewFleet(AN, FLEET, { hang: S.hang }, TODAY));
+    (function () {
+      var g = loadedPlates().filter(function (p) { var r = S.plates[p]; return !fleetOf(p) && !(r && (r.typeManual || (r.typeManual == null && r.type && r.type !== 'std'))); });
+      if (g.length) FINDINGS.push({ who: 'cun', level: 'canh', title: 'Loại xe đang đoán: ' + g.map(function (p) { return C.plateFmt(p) + ' = ' + TYPE[plateType(p)]; }).join(', '), detail: 'Xe chưa có trong sổ xe. Lớp ' + ((S.course && S.course.hang) || S.hang) + ' nhiều xe: xe học viên lớp chạy ít nhất được coi là xe số tự động, các xe còn lại là xe chính của hạng.', fix: 'Nạp sổ xe hoặc chọn loại xe ở mục Từng xe (tab Lọc DAT) để chắc chắn.' });
+    })();
     if (AN && !FLEET && (S.course && (S.course.hang === 'Bss' || S.course.hang === 'C1'))) FINDINGS.push({ who: 'rong', level: 'goiy', title: 'Nạp sổ xe để tách bài số tự động và bài theo loại xe', detail: 'Chưa có sổ xe nên mọi xe chưa chọn loại đều đang coi là số tự động. Với lớp ' + S.course.hang + ', phiên trên xe số sàn có thể bị gán nhầm vào bài STĐ.', fix: 'Nạp file sổ xe ở tab Lọc DAT (kéo thả như file DAT).' });
     if (PLAN) FINDINGS = FINDINGS.concat(C.reviewSchedule(S.course, S.rows, PLAN, cfgReq)).concat(C.reviewMoc(S.rows, S.moc));
     if (AN && PLAN) FINDINGS = FINDINGS.concat(C.reviewCross(AN, S.course, PLAN));
@@ -2552,7 +2585,7 @@ if (typeof module !== 'undefined') module.exports = Core;
       var r = S.plates[k], on = loadedPlates().indexOf(k) >= 0;
       return '<div class="pl"><span class="plate">' + esc(C.plateFmt(k)) + '</span>' + (on ? '<span class="pill ok">Đang nạp DAT</span>' : '') +
         '<label class="f" style="flex-direction:row">Loại xe <select data-ptype="' + esc(k) + '">' + Object.keys(TYPE).map(function (t) { return '<option value="' + t + '"' + (plateType(k) === t ? ' selected' : '') + '>' + TYPE[t] + '</option>'; }).join('') + '</select></label>' +
-        '<span class="fsrc">' + (r.typeManual ? 'bạn tự chọn' + (fleetOf(k) ? ' · <a href="#" data-pauto="' + esc(k) + '">theo sổ xe</a>' : '') : fleetOf(k) ? 'theo sổ xe' : 'chưa có trong sổ xe') + '</span>' +
+        '<span class="fsrc">' + (r.typeManual ? 'bạn tự chọn · <a href="#" data-pauto="' + esc(k) + '">' + (fleetOf(k) ? 'theo sổ xe' : 'để tool tự đoán') + '</a>' : fleetOf(k) ? 'theo sổ xe' : 'tool tự đoán (chưa có trong sổ xe)') + '</span>' +
         fleetLine(k) +
         '<div class="names">' + (r.names && r.names.length ? r.names.length + ' HV: ' + esc(r.names.join(', ')) : 'Chưa có danh sách lớp') + '</div>' +
         '<button class="btn sm" data-puse="' + esc(k) + '">Dùng danh sách này</button><button class="btn sm ghost" data-pdel="' + esc(k) + '">Xoá</button></div>';
@@ -3492,7 +3525,7 @@ if (typeof module !== 'undefined') module.exports = Core;
   $('#rqStd').onchange = function () { setOver('std', hm(this.value)); };
   $('#rqReset').onclick = function () { delete S.reqOver[S.hang]; recompute(); toast('cop', 'Đã về bảng quy định', 'Tiêu chuẩn hạng ' + S.hang + ' lấy lại theo bảng quy định.'); };
   $('#plateBox').addEventListener('change', function (e) { var k = e.target.dataset.ptype; if (!k) return; S.plates[k] = S.plates[k] || { names: [] }; S.plates[k].type = e.target.value; S.plates[k].typeManual = true; act('Đổi loại xe', C.plateFmt(k) + ' → ' + TYPE[e.target.value]); recompute(); });
-  $('#plateBox').addEventListener('click', function (e) { var a = e.target.closest('[data-pauto]'); if (!a) return; e.preventDefault(); var k = a.dataset.pauto; if (S.plates[k]) { S.plates[k].typeManual = false; } recompute(); });
+  $('#plateBox').addEventListener('click', function (e) { var a = e.target.closest('[data-pauto]'); if (!a) return; e.preventDefault(); var k = a.dataset.pauto; if (S.plates[k]) { S.plates[k].typeManual = false; S.plates[k].type = 'std'; } recompute(); });
   $('#fleetBox').addEventListener('input', function (e) { if (e.target.id === 'fleetQ') renderFleetList(e.target.value); });
   $('#fleetBox').addEventListener('click', function (e) {
     if (e.target.id === 'fleetClear') { S.fleet = null; indexFleet(); act('Xoá sổ xe', ''); recompute(); }
@@ -3625,7 +3658,7 @@ if (typeof module !== 'undefined') module.exports = Core;
 
 </script>
 
-<script>(function(){var V='20261017-0247';
+<script>(function(){var V='20261017-0303';
 if(!('serviceWorker' in navigator)||(location.protocol!=='https:'&&location.hostname!=='localhost'))return;
 navigator.serviceWorker.register('sw.js').then(function(r){r.update();});
 var had=!!navigator.serviceWorker.controller;
