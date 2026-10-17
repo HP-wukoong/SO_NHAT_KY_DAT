@@ -201,6 +201,12 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13px
 .fstbl th,.fstbl td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:middle}
 .fstbl td.n{text-align:right;white-space:nowrap}
 .fstbl td.a{white-space:nowrap;text-align:right}
+.fleet-sum{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.fleet-tbl{width:100%;border-collapse:collapse;font-size:14px}
+.fleet-tbl th,.fleet-tbl td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left}
+.fleet-tbl tr.bad td{background:rgba(198,40,40,.08)}
+.fleet-tbl tr.warn td{background:rgba(237,108,2,.08)}
+.fsrc{font-size:12px;color:var(--muted,#666)}
 </style>
 
 <header class="top">
@@ -232,7 +238,7 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13px
   <div class="grid2">
     <div class="card">
       <h2><span class="n">1</span>File DAT của lớp (1 hoặc nhiều xe)</h2>
-      <p class="hint">Lớp chạy 2–3 xe thì nạp cùng lúc file DAT của tất cả các xe: chọn nhiều file (giữ Ctrl), kéo thả cả nhóm file, hoặc chọn cả thư mục của lớp. Phiên trùng tự loại.</p>
+      <p class="hint">Nạp thêm file <b>Sổ xe</b> (biển số, nhãn hiệu, hạng, giấy phép xe tập lái) để tool biết xe nào số tự động, số sàn, xe tải và gán đúng bài. Lớp chạy 2–3 xe thì nạp cùng lúc file DAT của tất cả các xe: chọn nhiều file (giữ Ctrl), kéo thả cả nhóm file, hoặc chọn cả thư mục của lớp. Phiên trùng tự loại.</p>
       <div class="drop" data-drop="any">
         <strong>Kéo thả nhiều file vào đây</strong>
         <div class="row" style="justify-content:center;margin-top:8px">
@@ -267,6 +273,9 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13px
     <p class="hint">Một lớp gồm nhiều xe và một danh sách học viên. Nạp DAT của bất kỳ xe nào trong lớp, tool tự lấy danh sách lớp. Giờ đêm tính từ 18:00 đến 05:00 sáng hôm sau.</p>
     <div id="classBox"></div>
     <details class="hvs" style="margin-top:10px"><summary><b>Từng xe</b><span class="tag">loại xe, danh sách riêng</span></summary><div id="plateBox"></div></details>
+    <details class="hvs" id="fleetDet" style="margin-top:10px"><summary><b>Sổ xe</b><span class="tag" id="fleetTag">chưa nạp</span></summary>
+      <div id="fleetBox" style="margin-top:8px"></div>
+    </details>
     <div class="row" style="margin-top:14px;align-items:end">
       <label class="f">Hạng đào tạo<select id="hangDat"></select></label>
       <label class="f">Km sân tập/HV<input type="number" id="rqSan" style="width:86px"></label>
@@ -724,6 +733,84 @@ var Core = (function () {
   }
 
   // Danh sách HV: sheet có "HO TEN" mà không có "QUANG DUONG"; kèm cột "DIEU KIEN Z"
+  /* ---------- SỔ XE (dữ liệu xe tập lái): biển số, hạng, loại, giấy phép xe tập lái ---------- */
+  var PLATE_RE = /^\d{2}[A-Z]{1,2}\d?\d{4,5}$/;
+  function isPlate(v) { return v != null && !(v instanceof Date) && PLATE_RE.test(plateCompact(v)); }
+  function fleetType(v) {
+    var h = strip(v.hang).replace(/\./g, ''), b = strip(v.brand), l = strip(v.loai);
+    if (v.stdDat || /STD|TU DONG/.test(h) || /STD/.test(b)) return 'std';
+    if (/^BSS|^B2|^B11?$/.test(h)) return (/VIOS|MAZDA|ACCENT|CITY|INNOVA|INOVA|CERATO|SPARK|MORNING/.test(b) && /CON/.test(l)) ? 'ssCon' : 'ssTai';
+    if (/^C1/.test(h)) return 'c1';
+    if (/^CE|^FC/.test(h)) return 'ce';
+    if (/^C/.test(h)) return 'taiC';
+    if (/^D/.test(h)) return 'khach';
+    return /TAI/.test(l) ? 'taiC' : 'ssCon';
+  }
+  var FLEET_TYPE = { std: 'Số tự động (STĐ)', ssCon: 'Số sàn xe con (Vios…)', ssTai: 'Số sàn tải / Isuzu 7 chỗ', c1: 'Tải hạng C1', taiC: 'Tải hạng C', ce: 'Đầu kéo CE', khach: 'Xe khách D' };
+  function vehGroup(t) { return t === 'ssCon' ? 'con' : (t === 'ssTai' || t === 'c1' || t === 'taiC') ? 'tai' : null; }
+  function extractFleet(sheet) {
+    var rows = sheet.rows, h = findHeader(rows, ['NHAN HIEU', 'HANG'], 15);
+    if (!h) return null;
+    var k = h.keys, cP = -1;
+    for (var i = 0; i < k.length; i++) if (/SO ?XE/.test(k[i]) && !/DAT|IMEI/.test(k[i])) { cP = i; break; }
+    if (cP < 0) return null;
+    var sub = (rows[h.row + 1] || []).map(key);
+    var both = k.map(function (x, i) { return x + ' ' + (sub[i] || ''); });
+    function c(re, not) { for (var i = 0; i < both.length; i++) if (re.test(both[i]) && !(not && not.test(both[i]))) return i; return -1; }
+    var cB = c(/NHAN HIEU/), cH = c(/(^| )HANG( |$)/), cY = c(/NAM SX|NAM SAN XUAT/), cL = c(/^LOAI/), cO = c(/CHU SO HUU|CHU XE/),
+      cG = c(/GIAY PHEP/), cCap = c(/NGAY CAP/), cHet = c(/HET HAN/), cD = c(/TREN DAT/);
+    var maxMain = Math.max(cP, cB, cH, cY, cL, cO, cG, cCap, cHet, cD);
+    var list = [], byPlate = {}, side = {};
+    for (var r = h.row + 1; r < rows.length; r++) {
+      var row = rows[r] || [];
+      if (isPlate(row[cP])) {
+        var v = { plate: plateCompact(row[cP]), brand: nfc(row[cB] || ''), hang: nfc(row[cH] || ''), nam: num(row[cY]), loai: cL >= 0 ? nfc(row[cL] || '') : '', owner: cO >= 0 ? nfc(row[cO] || '') : '',
+          gpSo: cG >= 0 ? (row[cG] instanceof Date ? fmtDMY(parseDate(row[cG])) : nfc(row[cG] == null ? '' : row[cG])) : '', gpSoIsDate: cG >= 0 && row[cG] instanceof Date,
+          gpCap: cCap >= 0 ? parseDate(row[cCap]) : null, gpHet: cHet >= 0 ? parseDate(row[cHet]) : null, datPlate: cD >= 0 && isPlate(row[cD]) ? plateCompact(row[cD]) : null };
+        if (!byPlate[v.plate]) { byPlate[v.plate] = v; list.push(v); } else v.dup = true;
+      }
+      // bảng phụ "Số xe trên DAT" (xe số tự động khai trên DAT) nằm bên phải bảng chính
+      for (var j = maxMain + 1; j < row.length; j++) {
+        if (!isPlate(row[j])) continue;
+        var near = row.slice(j + 1, j + 4).map(function (x) { return strip(x == null ? '' : x); }).join(' ');
+        if (/STD|TU DONG/.test(near)) { side[plateCompact(row[j])] = { model: nfc(row[j + 1] || ''), hang: nfc(row[j + 2] || '') }; j += 3; }
+      }
+    }
+    if (list.length < 2) return null;
+    var notes = [];
+    Object.keys(side).forEach(function (p) {
+      var v = byPlate[p];
+      if (v) { v.stdDat = true; v.datModel = side[p].model; if (side[p].model && v.brand && strip(side[p].model).split(' ')[0] !== strip(v.brand).split(/[- ]/)[0]) notes.push({ plate: p, msg: 'Bảng chính ghi ' + v.brand + ', bảng "Số xe trên DAT" ghi ' + side[p].model }); }
+      else { v = { plate: p, brand: side[p].model, hang: 'Bstđ', loai: 'Xe con', owner: '', gpSo: '', gpCap: null, gpHet: null, stdDat: true, onlyDat: true, datModel: side[p].model }; byPlate[p] = v; list.push(v); }
+    });
+    list.forEach(function (v) { v.type = fleetType(v); if (v.gpSoIsDate) notes.push({ plate: v.plate, msg: 'Ô số giấy phép bị Excel đổi thành ngày (' + v.gpSo + '), nên gõ lại dạng chữ' }); });
+    return { list: list, byPlate: byPlate, notes: notes, sheet: sheet.name };
+  }
+  // Soát xe đã chạy DAT so với sổ xe và hạng khóa
+  function reviewFleet(an, fleet, course, today) {
+    var out = []; if (!an || !fleet) return out;
+    var seen = {}; an.sessions.forEach(function (s) { var x = seen[s.plate] = seen[s.plate] || { from: s.date, to: s.date, n: 0 }; x.n++; if (s.date < x.from) x.from = s.date; if (s.date > x.to) x.to = s.date; });
+    var hang = course && course.hang;
+    Object.keys(seen).forEach(function (p) {
+      var v = fleet.byPlate[p], x = seen[p];
+      if (!v) { out.push(F('cun', 'canh', 'Xe ' + plateFmt(p) + ' không có trong sổ xe', 'DAT có ' + x.n + ' phiên của xe này nhưng file sổ xe không có biển số đó.', 'Kiểm tra lại biển số trên DAT hoặc bổ sung xe vào sổ xe rồi nạp lại.')); return; }
+      if (v.gpHet && v.gpHet < x.to) {
+        var bad = an.sessions.filter(function (s) { return s.plate === p && s.date > v.gpHet; });
+        if (bad.length) out.push(F('cop', 'loi', 'Xe ' + plateFmt(p) + ' chạy khi giấy phép xe tập lái đã hết hạn', 'Giấy phép ' + (v.gpSo || '') + ' hết hạn ' + fmtDMY(v.gpHet) + ', nhưng DAT còn ' + bad.length + ' phiên sau ngày đó (đến ' + fmtDMY(x.to) + ').', 'Gia hạn giấy phép, hoặc chuyển các phiên đó sang xe còn hạn trước khi lập sổ.', R('trau', 'Bị kiểm tra là đình chỉ xe cả lớp, sửa trước khi nộp sổ.')));
+      }
+      if (v.gpCap && v.gpCap > x.from) out.push(F('cop', 'canh', 'Xe ' + plateFmt(p) + ' chạy trước ngày cấp giấy phép xe tập lái', 'Giấy phép cấp ' + fmtDMY(v.gpCap) + ', phiên DAT đầu tiên ' + fmtDMY(x.from) + '.', 'Đối chiếu lại giấy phép cũ của xe (có thể đã gia hạn).'));
+      if (hang === 'Bstđ' && v.type !== 'std') out.push(F('cop', 'loi', 'Lớp B số tự động chạy xe ' + plateFmt(p) + ' (' + FLEET_TYPE[v.type] + ')', 'Sổ xe ghi ' + v.brand + ' hạng ' + v.hang + '. Học viên Bstđ phải tập trên xe số tự động.', 'Kiểm tra lại biển số hoặc tách phiên này khỏi sổ Bstđ.'));
+      if (hang === 'Bss' && (v.type === 'c1' || v.type === 'taiC' || v.type === 'ce' || v.type === 'khach')) out.push(F('cop', 'canh', 'Lớp Bss chạy xe ' + plateFmt(p) + ' (' + FLEET_TYPE[v.type] + ')', 'Sổ xe ghi hạng ' + v.hang + '.', 'Xem lại xe phân cho lớp.'));
+      if (hang === 'C1' && (v.type === 'ssCon')) out.push(F('cop', 'canh', 'Lớp C1 chạy xe con ' + plateFmt(p), 'Sổ xe ghi ' + v.brand + ' hạng ' + v.hang + '.', 'Xem lại xe phân cho lớp.'));
+    });
+    if (today) fleet.list.forEach(function (v) {
+      if (!seen[v.plate] || !v.gpHet) return;
+      var left = diffDays(today, v.gpHet);
+      if (left >= 0 && left <= 30) out.push(F('heo', 'canh', 'Giấy phép xe ' + plateFmt(v.plate) + ' còn ' + left + ' ngày', 'Hết hạn ' + fmtDMY(v.gpHet) + '.', 'Làm hồ sơ gia hạn sớm để không gián đoạn lớp.'));
+    });
+    return out;
+  }
+
   function extractStudents(sheet) {
     var h = findHeader(sheet.rows, ['HO TEN']);
     if (!h || h.keys.some(function (k) { return k.indexOf('QUANG DUONG') >= 0 || k.indexOf('NOI DUNG') >= 0; })) return null;
@@ -912,7 +999,7 @@ var Core = (function () {
     // 1) DAT thật mỗi ngày, tách phần ngày / phần đêm
     var datDay = {}, stdApplies = course.hang === 'Bss' || course.hang === 'C1';
     an.days.forEach(function (d) {
-      var x = { km: 0, h: 0, dayKm: 0, dayMin: 0, nightKm: 0, nightMin: 0, ses: [], daySes: [], nightSes: [], nightParts: [], stdSes: [], stdKm: 0, stdMin: 0, std: false, who: [], plateKm: {} };
+      var x = { km: 0, h: 0, dayKm: 0, dayMin: 0, nightKm: 0, nightMin: 0, ses: [], daySes: [], nightSes: [], nightParts: [], stdSes: [], stdKm: 0, stdMin: 0, std: false, who: [], plateKm: {}, grpKm: {} };
       Object.keys(d.in).forEach(function (n) {
         x.who.push(n);
         d.in[n].sessions.forEach(function (s) {
@@ -921,6 +1008,7 @@ var Core = (function () {
           x.ses.push(it); x.km += s.km; x.h += s.hours;
           if (s.std && stdApplies) { x.stdSes.push(it); x.stdKm += s.km; x.stdMin += dur; x.std = true; return; }
           x.plateKm[s.plate] = (x.plateKm[s.plate] || 0) + s.km;
+          var g = vehGroup(s.ptype); if (g) x.grpKm[g] = (x.grpKm[g] || 0) + s.km;
           x.nightKm += it.nightKm; x.nightMin += nm; x.dayKm += s.km - it.nightKm; x.dayMin += dur - nm;
           (nm >= dur / 2 ? x.nightSes : x.daySes).push(it);
           if (nm > 0) {
@@ -958,7 +1046,7 @@ var Core = (function () {
 
     var lines = [], carry = 0, dec = o.kmDec || 0, f = Math.pow(10, dec);
     function roundKm(x) { var r = Math.round((x + carry) * f) / f; carry += x - r; return r; }
-    var hv = plan.hv, moves = [], reused = 0, nightRows = 0, capped = [];
+    var hv = plan.hv, moves = [], reused = 0, nightRows = 0, capped = [], vehMoves = [];
     function rotate(seg, di) {
       var n = hv.length || 1, len = (seg.end - seg.start) / n;
       seg.turns = hv.map(function (_, i) { return { hv: hv[(i + di) % n], start: Math.round(seg.start + i * len), end: Math.round(seg.start + (i + 1) * len), km: Math.round(seg.km / n * 10) / 10 }; });
@@ -990,7 +1078,28 @@ var Core = (function () {
     }
     var anyStd = Object.keys(datDay).some(function (k) { return datDay[k].stdSes.length; });
     var roadByDate = roadQ.filter(function (l) { return !(anyStd && stdRow && l.rowId === stdRow.id); });
-    function pickRoad(date) {
+    // Nhóm xe của từng bài theo đề mục lịch (Bss: "Tập lái trên xe Tải/Isuzu 7 chỗ" ↔ "Chuyển tập lái xe con Vios")
+    var rowGrp = {}, curG = null;
+    rows.forEach(function (r) {
+      var hdr = !r.tu && r.ca1 == null && r.ca2 == null && r.dem == null && r.gio == null;
+      if (hdr) { var t = strip(r.ten); if (/XE CON|VIOS/.test(t)) curG = 'con'; else if (/XE TAI|ISUZU/.test(t)) curG = 'tai'; }
+      rowGrp[r.id] = curG;
+    });
+    var hasGrp = roadByDate.some(function (l) { return rowGrp[l.rowId] === 'con'; }) && roadByDate.some(function (l) { return rowGrp[l.rowId] === 'tai'; });
+    function dayGroup(dd) {
+      if (!hasGrp || !dd || !dd.grpKm) return null;
+      var c = dd.grpKm.con || 0, t = dd.grpKm.tai || 0;
+      return c > t ? 'con' : t > c ? 'tai' : null;
+    }
+    function pickRoad(date, grp) {
+      if (grp) {
+        var pool = roadByDate.filter(function (l) { return rowGrp[l.rowId] === grp; });
+        if (pool.length) {
+          var s1 = pool.filter(function (l) { return l.date === date; }); if (s1.length) return s1[0];
+          var b1 = pool.filter(function (l) { return l.date < date; }); if (b1.length) return b1[b1.length - 1];
+          return pool[0];
+        }
+      }
       var same = roadByDate.filter(function (l) { return l.date === date; });
       if (same.length) return same[0];
       var before = roadByDate.filter(function (l) { return l.date < date; });
@@ -1025,7 +1134,9 @@ var Core = (function () {
         var hasDay = dd.dayKm >= 0.5 && dd.dayMin >= 5, hasNight = dd.nightKm >= 0.5 && dd.nightMin >= 5;
         var unit = null;
         if (hasDay || hasNight) {
-          unit = pickRoad(date);
+          var grp = dayGroup(dd);
+          unit = pickRoad(date, grp);
+          if (grp && unit && rowGrp[unit.rowId] === grp && unit.date !== date) vehMoves.push({ date: date, grp: grp, bai: unit.bai });
         }
         var combo = unit && isNightCombo(unit);
         var mainPlate = Object.keys(dd.plateKm).sort(function (a, b) { return dd.plateKm[b] - dd.plateKm[a]; })[0] || '';
@@ -1086,7 +1197,7 @@ var Core = (function () {
     var nHV = Math.max(1, course.hvThuc);
     tot.perHV = { min: tot.min / nHV, km: tot.km / nHV, roadKm: tot.roadKm / nHV, nightMin: tot.nightMin / nHV, nightKm: tot.nightKm / nHV };
     return { lines: lines, byDay: byDay, days: days, overload: [], totals: tot, ratio: ratio, hv: hv, mode: 'dat', fillLesson: thInfo, plan: plan,
-      capped: capped, moves: moves, leftSan: dropped.concat(sanQ).sort(function (a, b) { return a.planDate < b.planDate ? -1 : 1; }), roadNoDat: roadNoDat, reused: reused, nightRows: nightRows, roadTotal: roadTotal, sanTotal: sanTotal };
+      capped: capped, moves: moves, vehMoves: vehMoves, leftSan: dropped.concat(sanQ).sort(function (a, b) { return a.planDate < b.planDate ? -1 : 1; }), roadNoDat: roadNoDat, reused: reused, nightRows: nightRows, roadTotal: roadTotal, sanTotal: sanTotal };
   }
 
 
@@ -1275,7 +1386,7 @@ var Core = (function () {
       var nm = a != null && b != null ? nightOverlap(a, b, nS, nE) : 0;
       var dur = a != null && b != null ? (b - a) : s.hours * 60;
       var nk = dur > 0 ? s.km * nm / dur : 0;
-      var x = Object.assign({}, s, { start: a, end: b, dur: dur, nightMin: nm, nightKm: nk, std: ptype[s.plate] === 'std' });
+      var x = Object.assign({}, s, { start: a, end: b, dur: dur, nightMin: nm, nightKm: nk, std: ptype[s.plate] === 'std', ptype: ptype[s.plate] || null });
       var bucket = m ? d.in : d.out, who = m ? m.who : s.name;
       var c = bucket[who] = bucket[who] || { name: who, km: 0, h: 0, n: 0, first: null, last: null, nightKm: 0, nightMin: 0, sessions: [], plates: {}, how: m ? m.how : null };
       c.km += s.km; c.h += s.hours; c.n++; c.nightKm += nk; c.nightMin += nm; c.sessions.push(x); c.plates[s.plate] = 1;
@@ -1765,6 +1876,7 @@ var Core = (function () {
   return {
     nfc: nfc, up: up, strip: strip, parseDate: parseDate, addDays: addDays, diffDays: diffDays, fmtDM: fmtDM, fmtDMY: fmtDMY, thu: thu,
     parseTime: parseTime, fmtHM: fmtHM, clock: clock, num: num, r2: r2, plateFmt: plateFmt, plateCompact: plateCompact, plateFromFilename: plateFromFilename,
+    extractFleet: extractFleet, reviewFleet: reviewFleet, FLEET_TYPE: FLEET_TYPE, fleetType: fleetType,
     readWorkbook: readWorkbook, rowsFromText: rowsFromText, extractDAT: extractDAT, extractStudents: extractStudents, extractSchedule: extractSchedule,
     scheduleRow: scheduleRow, buildActualLogbook: buildActualLogbook, reviewActual: reviewActual, arrangeToStandard: arrangeToStandard, reviewStandard: reviewStandard, splitDay: splitDay, isRoad: isRoad, isCabin: isCabin, isSectionHeader: isSectionHeader, nDays: nDays, buildLogbook: buildLogbook,
     dedupeSessions: dedupeSessions, analyzeDAT: analyzeDAT, reviewDAT: reviewDAT, reviewSchedule: reviewSchedule, reviewCross: reviewCross, reviewHabits: reviewHabits, reviewMoc: reviewMoc,
@@ -1794,7 +1906,7 @@ if (typeof module !== 'undefined') module.exports = Core;
   function save() {
     if (RESTORING) return;
     try {
-      localStorage.setItem(KEY, JSON.stringify({ habits: H, draft: { students: S.students, z: S.z, hang: S.hang, reqOver: S.reqOver, plates: S.plates, course: S.course, rows: S.rows, moc: S.moc, presetKey: S.presetKey, soMode: S.soMode, ao: S.ao, kt: S.kt, classes: S.classes, activeClass: S.activeClass, soPlate: S.soPlate, stdOpt: S.stdOpt } }));
+      localStorage.setItem(KEY, JSON.stringify({ habits: H, draft: { students: S.students, z: S.z, hang: S.hang, reqOver: S.reqOver, plates: S.plates, course: S.course, rows: S.rows, moc: S.moc, presetKey: S.presetKey, soMode: S.soMode, ao: S.ao, kt: S.kt, classes: S.classes, activeClass: S.activeClass, soPlate: S.soPlate, stdOpt: S.stdOpt, fleet: S.fleet } }));
     } catch (e) { /* bỏ qua */ }
     if (typeof autoBackupSoon === 'function') autoBackupSoon();
   }
@@ -1842,6 +1954,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     hang: D.hang || (learned('hang') || {}).v || 'Bstđ',
     reqOver: D.reqOver || {}, kt: D.kt || null, stdOpt: Object.assign({ auto: true, caMax: 285, sanKmh: 4.8 }, D.stdOpt || {}), classes: D.classes || null, activeClass: D.activeClass || null, soPlate: D.soPlate || '',
     plates: D.plates || {},
+    fleet: D.fleet || null,
     course: D.course || null, rows: (D.rows || []).map(C.scheduleRow), moc: D.moc || [], presetKey: D.presetKey || null,
     showTurns: (learned('showTurns') || {}).v === 'true',
     image: null, tab: 'dat', filterWho: null, filterLv: null,
@@ -1854,6 +1967,10 @@ if (typeof module !== 'undefined') module.exports = Core;
   })();
   if (!S.classes) { S.classes = {}; Object.keys(S.plates).forEach(function (k) { var r = S.plates[k]; if (r.names && r.names.length) S.classes['Lớp xe ' + C.plateFmt(k)] = { plates: [k], names: r.names.slice() }; }); }
   var AN = null, LB = null, PLAN = null, STD = null, FINDINGS = [];
+  var FLEET = null;
+  function indexFleet() { FLEET = null; if (S.fleet && S.fleet.list) { FLEET = { list: S.fleet.list, byPlate: {}, notes: S.fleet.notes || [] }; S.fleet.list.forEach(function (v) { FLEET.byPlate[v.plate] = v; }); } }
+  indexFleet();
+  function fleetOf(p) { return FLEET && FLEET.byPlate[p] || null; }
 
   function defaultCourse(base) {
     var c = Object.assign({ khoa: '', hang: S.hang, nam: new Date().getFullYear(), hvLop: 5, hvThuc: 5, gioCa: 4, ca1: 420, ca2: 780, dem: 1080, giaoVien: '' }, base || {});
@@ -1916,6 +2033,14 @@ if (typeof module !== 'undefined') module.exports = Core;
   function ingestSheets(sheets, name, hint) {
     var info = { name: name, kinds: [], n: 0, plates: {}, from: null, to: null };
     sheets.forEach(function (sh) {
+      var fl = C.extractFleet(sh);
+      if (fl) {
+        S.fleet = { list: fl.list, notes: fl.notes, file: name, sheet: fl.sheet, time: new Date().toISOString() }; indexFleet();
+        var nStd = fl.list.filter(function (v) { return v.type === 'std'; }).length;
+        info.kinds.push('Sổ xe (' + fl.list.length + ' xe, ' + nStd + ' xe số tự động)');
+        setTimeout(function () { toast('rong', 'Đã nạp sổ xe', fl.list.length + ' xe. Loại xe từng biển số giờ lấy theo sổ xe: phiên trên xe số tự động vào bài STĐ, xe tải/Isuzu và xe con Vios tách đúng nhóm bài đường.' + (fl.notes.length ? ' Có ' + fl.notes.length + ' ô cần xem lại trong sổ xe.' : ''), null, 12000); }, 50);
+        return;
+      }
       var dat = C.extractDAT(sh, name);
       if (dat) {
         info.kinds.push('DAT'); info.n += dat.length;
@@ -2312,7 +2437,13 @@ if (typeof module !== 'undefined') module.exports = Core;
   /* ---------------- Tính toán ---------------- */
   function reqFor(h) { return Object.assign({}, C.REQS[h] || C.REQS['Bstđ'], S.reqOver[h] || {}); }
   function req() { return reqFor(S.hang); }
-  function plateTypeMap() { var m = {}; Object.keys(S.plates).forEach(function (k) { m[k] = S.plates[k].type; }); return m; }
+  function plateType(k) {
+    var r = S.plates[k], v = fleetOf(k);
+    if (r && r.typeManual) return r.type;
+    if (v) return v.type;
+    return (r && r.type) || 'std';
+  }
+  function plateTypeMap() { var m = {}; Object.keys(S.plates).concat(loadedPlates()).forEach(function (k) { m[k] = plateType(k); }); return m; }
   function loadedPlates() { var p = {}; S.sessions.forEach(function (s) { p[s.plate] = 1; }); return Object.keys(p); }
   var BUSY = false;
   function recompute() {
@@ -2331,9 +2462,12 @@ if (typeof module !== 'undefined') module.exports = Core;
     var cfgReq = { req: reqFor(S.course.hang) };
     FINDINGS = [];
     if (AN) FINDINGS = FINDINGS.concat(C.reviewDAT(AN, { req: req() }));
+    if (AN && FLEET) FINDINGS = FINDINGS.concat(C.reviewFleet(AN, FLEET, { hang: S.hang }, TODAY));
+    if (AN && !FLEET && (S.course && (S.course.hang === 'Bss' || S.course.hang === 'C1'))) FINDINGS.push({ who: 'rong', level: 'goiy', title: 'Nạp sổ xe để tách bài số tự động và bài theo loại xe', detail: 'Chưa có sổ xe nên mọi xe chưa chọn loại đều đang coi là số tự động. Với lớp ' + S.course.hang + ', phiên trên xe số sàn có thể bị gán nhầm vào bài STĐ.', fix: 'Nạp file sổ xe ở tab Lọc DAT (kéo thả như file DAT).' });
     if (PLAN) FINDINGS = FINDINGS.concat(C.reviewSchedule(S.course, S.rows, PLAN, cfgReq)).concat(C.reviewMoc(S.rows, S.moc));
     if (AN && PLAN) FINDINGS = FINDINGS.concat(C.reviewCross(AN, S.course, PLAN));
     if (LB && LB.mode === 'dat') FINDINGS = FINDINGS.concat(C.reviewActual(LB, S.course, S.ao));
+    if (LB && LB.vehMoves && LB.vehMoves.length) FINDINGS.push({ who: 'rong', level: 'tot', title: 'Gán bài đường theo loại xe thực chạy: ' + LB.vehMoves.length + ' ngày', detail: LB.vehMoves.map(function (m) { return C.fmtDM(m.date) + ' chạy ' + (m.grp === 'con' ? 'xe con' : 'xe tải/Isuzu') + ' → bài ' + m.bai; }).join('; ') + '.', fix: 'Theo sổ xe. Nếu xe nào phân loại sai, đổi ở mục Từng xe (tab Lọc DAT).' });
     if (STD) FINDINGS = FINDINGS.concat(C.reviewStandard(STD, S.course, reqFor(S.course.hang)));
     FINDINGS = FINDINGS.concat(C.reviewHabits(H, {
       studentsCount: S.students.length, hvThuc: S.course.hvThuc, exportedSoWithoutDAT: !!H.flags.soNoDat && !AN,
@@ -2411,18 +2545,59 @@ if (typeof module !== 'undefined') module.exports = Core;
     var g = {}; S.sessions.forEach(function (s) { var x = g[s.plate] = g[s.plate] || { n: 0, from: s.date, to: s.date, km: 0 }; x.n++; x.km += s.km; if (s.date < x.from) x.from = s.date; if (s.date > x.to) x.to = s.date; });
     $('#plateSum').innerHTML = '<div class="row">' + pl.map(function (p) { var x = g[p]; return '<span class="tag" style="padding:4px 10px"><span class="plate">' + esc(C.plateFmt(p)) + '</span> ' + x.n + ' phiên · ' + vn(x.km, 0) + ' km · ' + C.fmtDM(x.from) + '→' + C.fmtDM(x.to) + '</span>'; }).join('') + '</div>';
   }
-  var TYPE = { std: 'Số tự động', ss: 'Số sàn', taiC: 'Tải hạng C' };
+  var TYPE = C.FLEET_TYPE;
   function renderPlates() {
     var keys = Object.keys(S.plates);
     $('#plateBox').innerHTML = '<div class="plates">' + keys.map(function (k) {
       var r = S.plates[k], on = loadedPlates().indexOf(k) >= 0;
       return '<div class="pl"><span class="plate">' + esc(C.plateFmt(k)) + '</span>' + (on ? '<span class="pill ok">Đang nạp DAT</span>' : '') +
-        '<label class="f" style="flex-direction:row">Loại xe <select data-ptype="' + esc(k) + '">' + Object.keys(TYPE).map(function (t) { return '<option value="' + t + '"' + (r.type === t ? ' selected' : '') + '>' + TYPE[t] + '</option>'; }).join('') + '</select></label>' +
+        '<label class="f" style="flex-direction:row">Loại xe <select data-ptype="' + esc(k) + '">' + Object.keys(TYPE).map(function (t) { return '<option value="' + t + '"' + (plateType(k) === t ? ' selected' : '') + '>' + TYPE[t] + '</option>'; }).join('') + '</select></label>' +
+        '<span class="fsrc">' + (r.typeManual ? 'bạn tự chọn' + (fleetOf(k) ? ' · <a href="#" data-pauto="' + esc(k) + '">theo sổ xe</a>' : '') : fleetOf(k) ? 'theo sổ xe' : 'chưa có trong sổ xe') + '</span>' +
+        fleetLine(k) +
         '<div class="names">' + (r.names && r.names.length ? r.names.length + ' HV: ' + esc(r.names.join(', ')) : 'Chưa có danh sách lớp') + '</div>' +
         '<button class="btn sm" data-puse="' + esc(k) + '">Dùng danh sách này</button><button class="btn sm ghost" data-pdel="' + esc(k) + '">Xoá</button></div>';
     }).join('') + '</div>';
     var pl = loadedPlates();
     $('#rosterNote').textContent = pl.length ? 'Xe đang nạp: ' + pl.map(C.plateFmt).join(', ') : 'Nạp file DAT để gắn danh sách cho xe.';
+  }
+  function gpState(v) {
+    if (!v || !v.gpHet) return '';
+    var left = C.diffDays(TODAY, v.gpHet);
+    return left < 0 ? 'bad' : left <= 30 ? 'warn' : '';
+  }
+  function fleetLine(k) {
+    var v = fleetOf(k); if (!v) return '';
+    var st = gpState(v), left = v.gpHet ? C.diffDays(TODAY, v.gpHet) : null;
+    return '<div class="names">' + esc([v.brand, v.hang, v.loai, v.nam].filter(Boolean).join(' · ')) + (v.gpSo || v.gpHet ? ' · GP tập lái ' + esc(v.gpSo || '') + (v.gpHet ? ' hết hạn ' + C.fmtDMY(v.gpHet) : '') : '') +
+      (st === 'bad' ? ' <span class="pill bad">Đã hết hạn</span>' : st === 'warn' ? ' <span class="pill warn">Còn ' + left + ' ngày</span>' : '') + '</div>';
+  }
+  function renderFleet() {
+    var tag = $('#fleetTag'), box = $('#fleetBox');
+    if (!FLEET) {
+      tag.textContent = 'chưa nạp';
+      box.innerHTML = '<p class="hint" style="margin:0">Nạp file sổ xe (cột Số xe, Nhãn hiệu, Hạng, Loại, Giấy phép xe tập lái…) như nạp file DAT: kéo thả, chọn file hoặc dán. Bảng phụ "Số xe trên DAT" (xe STĐ) cũng được đọc.</p><div class="row" style="margin-top:6px"><button class="btn sm" id="fleetPick">Chọn file sổ xe</button></div>';
+      return;
+    }
+    var cnt = {}; FLEET.list.forEach(function (v) { cnt[v.type] = (cnt[v.type] || 0) + 1; });
+    var exp = FLEET.list.filter(function (v) { return gpState(v); }).sort(function (a, b) { return a.gpHet < b.gpHet ? -1 : 1; });
+    tag.textContent = FLEET.list.length + ' xe' + (exp.length ? ' · ' + exp.length + ' GP hết/sắp hết hạn' : '');
+    box.innerHTML = '<div class="hint" style="margin:0">File: ' + esc(S.fleet.file || '') + ' · nạp lúc ' + esc(C.fmtDMY(C.fromDateObj(new Date(S.fleet.time)))) + '</div>' +
+      '<div class="fleet-sum">' + Object.keys(TYPE).filter(function (t) { return cnt[t]; }).map(function (t) { return '<span class="tag">' + esc(TYPE[t]) + ': <b>' + cnt[t] + '</b></span>'; }).join('') + '</div>' +
+      (FLEET.notes.length ? '<details><summary>' + FLEET.notes.length + ' ô cần xem lại trong sổ xe</summary><ul style="margin:6px 0">' + FLEET.notes.map(function (n) { return '<li><span class="plate">' + esc(C.plateFmt(n.plate)) + '</span> ' + esc(n.msg) + '</li>'; }).join('') + '</ul></details>' : '') +
+      '<div class="row" style="margin:8px 0"><input type="text" id="fleetQ" placeholder="Tìm biển số, nhãn hiệu, hạng… (bỏ trống: xe GP hết/sắp hết hạn)" style="flex:1 1 260px"><button class="btn sm" id="fleetPick">Nạp lại sổ xe</button><button class="btn sm ghost" id="fleetClear">Xoá sổ xe</button></div>' +
+      '<div class="tbl-wrap" id="fleetList"></div>';
+    renderFleetList('');
+  }
+  function renderFleetList(q) {
+    var el = $('#fleetList'); if (!el || !FLEET) return;
+    var qs = C.strip(q || ''), qp = C.plateCompact(q || '');
+    var list = qs ? FLEET.list.filter(function (v) { return (qp && v.plate.indexOf(qp) >= 0) || C.strip([v.brand, v.hang, v.loai, C.FLEET_TYPE[v.type]].join(' ')).indexOf(qs) >= 0; })
+      : FLEET.list.filter(function (v) { return gpState(v) || loadedPlates().indexOf(v.plate) >= 0; });
+    list = list.slice(0, 80);
+    el.innerHTML = list.length ? '<table class="fleet-tbl"><tr><th>Biển số</th><th>Nhãn hiệu</th><th>Hạng</th><th>Loại xe (để gán bài)</th><th>GP tập lái</th><th>Hết hạn</th></tr>' + list.map(function (v) {
+      var st = gpState(v), on = loadedPlates().indexOf(v.plate) >= 0;
+      return '<tr class="' + st + '"><td><span class="plate">' + esc(C.plateFmt(v.plate)) + '</span>' + (on ? ' <span class="pill ok">đang nạp DAT</span>' : '') + '</td><td>' + esc(v.brand) + '</td><td>' + esc(v.hang) + '</td><td>' + esc(TYPE[v.type]) + '</td><td>' + esc(v.gpSo || '') + '</td><td>' + (v.gpHet ? esc(C.fmtDMY(v.gpHet)) : '') + '</td></tr>';
+    }).join('') + '</table>' : '<p class="hint">' + (qs ? 'Không tìm thấy xe.' : 'Không có xe nào hết hạn giấy phép trong 30 ngày tới.') + '</p>';
   }
   function renderReq() {
     var R = req();
@@ -2431,7 +2606,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     $('#rqDem').value = R.dem ? minToStr(R.dem) : ''; $('#rqStd').value = R.std ? minToStr(R.std) : '';
   }
   function renderDAT() {
-    renderFiles(); renderPlates(); renderReq(); renderClasses(); renderPlateSum(); renderPerPlate();
+    renderFiles(); renderPlates(); renderFleet(); renderReq(); renderClasses(); renderPlateSum(); renderPerPlate();
     $('#expDat').disabled = !AN;
     if (!AN) {
       $('#datMeta').textContent = 'Chưa có dữ liệu DAT.';
@@ -3295,7 +3470,9 @@ if (typeof module !== 'undefined') module.exports = Core;
   $('#fileList').onclick = function (e) {
     var b = e.target.closest('[data-rmfile]'); if (!b) return;
     var f = S.files.splice(+b.dataset.rmfile, 1)[0];
-    S.sessions = S.sessions.filter(function (s) { return s.src !== f.name; }); act('Bỏ file', f.name); recompute();
+    S.sessions = S.sessions.filter(function (s) { return s.src !== f.name; });
+    if (S.fleet && S.fleet.file === f.name && f.kinds.some(function (k) { return /^Sổ xe/.test(k); })) { S.fleet = null; indexFleet(); }
+    act('Bỏ file', f.name); recompute();
   };
   var tHv;
   $('#hvText').oninput = function () {
@@ -3314,7 +3491,13 @@ if (typeof module !== 'undefined') module.exports = Core;
   $('#rqDem').onchange = function () { setOver('dem', hm(this.value)); };
   $('#rqStd').onchange = function () { setOver('std', hm(this.value)); };
   $('#rqReset').onclick = function () { delete S.reqOver[S.hang]; recompute(); toast('cop', 'Đã về bảng quy định', 'Tiêu chuẩn hạng ' + S.hang + ' lấy lại theo bảng quy định.'); };
-  $('#plateBox').addEventListener('change', function (e) { var k = e.target.dataset.ptype; if (!k) return; S.plates[k].type = e.target.value; act('Đổi loại xe', C.plateFmt(k) + ' → ' + TYPE[e.target.value]); recompute(); });
+  $('#plateBox').addEventListener('change', function (e) { var k = e.target.dataset.ptype; if (!k) return; S.plates[k] = S.plates[k] || { names: [] }; S.plates[k].type = e.target.value; S.plates[k].typeManual = true; act('Đổi loại xe', C.plateFmt(k) + ' → ' + TYPE[e.target.value]); recompute(); });
+  $('#plateBox').addEventListener('click', function (e) { var a = e.target.closest('[data-pauto]'); if (!a) return; e.preventDefault(); var k = a.dataset.pauto; if (S.plates[k]) { S.plates[k].typeManual = false; } recompute(); });
+  $('#fleetBox').addEventListener('input', function (e) { if (e.target.id === 'fleetQ') renderFleetList(e.target.value); });
+  $('#fleetBox').addEventListener('click', function (e) {
+    if (e.target.id === 'fleetClear') { S.fleet = null; indexFleet(); act('Xoá sổ xe', ''); recompute(); }
+    if (e.target.id === 'fleetPick') $('#fileDat').click();
+  });
   $('#plateBox').addEventListener('click', function (e) {
     var b = e.target.closest('[data-puse],[data-pdel]'); if (!b) return;
     if (b.dataset.puse) { var r = S.plates[b.dataset.puse]; if (r.names && r.names.length) { S.students = r.names.slice(); $('#hvText').value = S.students.join('\n'); recompute(); } }
@@ -3442,7 +3625,7 @@ if (typeof module !== 'undefined') module.exports = Core;
 
 </script>
 
-<script>(function(){var V='20261016-1243';
+<script>(function(){var V='20261017-0247';
 if(!('serviceWorker' in navigator)||(location.protocol!=='https:'&&location.hostname!=='localhost'))return;
 navigator.serviceWorker.register('sw.js').then(function(r){r.update();});
 var had=!!navigator.serviceWorker.controller;
