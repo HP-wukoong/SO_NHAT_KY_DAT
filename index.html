@@ -997,7 +997,7 @@ var Core = (function () {
     var ratio = plan.ratio, caMin = course.gioCa * 60, minKm = o.minKm == null ? 5 : o.minKm;
     var start = plan.days[0], end = plan.days[plan.days.length - 1];
     // 1) DAT thật mỗi ngày, tách phần ngày / phần đêm
-    var datDay = {}, stdApplies = course.hang === 'Bss' || course.hang === 'C1';
+    var datDay = {}, stdApplies = course.hang === 'Bss' || course.hang === 'C1', foldedNight = [];
     an.days.forEach(function (d) {
       var x = { km: 0, h: 0, dayKm: 0, dayMin: 0, nightKm: 0, nightMin: 0, ses: [], daySes: [], nightSes: [], nightParts: [], stdSes: [], stdKm: 0, stdMin: 0, std: false, who: [], plateKm: {}, grpKm: {} };
       Object.keys(d.in).forEach(function (n) {
@@ -1009,6 +1009,9 @@ var Core = (function () {
           if (s.std && stdApplies) { x.stdSes.push(it); x.stdKm += s.km; x.stdMin += dur; x.std = true; return; }
           x.plateKm[s.plate] = (x.plateKm[s.plate] || 0) + s.km;
           var g = vehGroup(s.ptype); if (g) x.grpKm[g] = (x.grpKm[g] || 0) + s.km;
+          // mẩu đêm quá ngắn (vd 04:54–05:00) không tách dòng bài đêm riêng: gộp vào phần ban ngày
+          var minNight = o.minNightMin == null ? 15 : o.minNightMin;
+          if (nm > 0 && nm < minNight) { foldedNight.push({ date: d.date, hv: n, min: nm, start: it.start, end: it.end }); nm = 0; it = Object.assign({}, it, { nightMin: 0, nightKm: 0 }); }
           x.nightKm += it.nightKm; x.nightMin += nm; x.dayKm += s.km - it.nightKm; x.dayMin += dur - nm;
           (nm >= dur / 2 ? x.nightSes : x.daySes).push(it);
           if (nm > 0) {
@@ -1205,7 +1208,7 @@ var Core = (function () {
     var nHV = Math.max(1, course.hvThuc);
     tot.perHV = { min: tot.min / nHV, km: tot.km / nHV, roadKm: tot.roadKm / nHV, nightMin: tot.nightMin / nHV, nightKm: tot.nightKm / nHV };
     return { lines: lines, byDay: byDay, days: days, overload: [], totals: tot, ratio: ratio, hv: hv, mode: 'dat', fillLesson: thInfo, plan: plan,
-      capped: capped, moves: moves, vehMoves: vehMoves, leftSan: dropped.concat(sanQ).sort(function (a, b) { return a.planDate < b.planDate ? -1 : 1; }), roadNoDat: roadNoDat, reused: reused, nightRows: nightRows, roadTotal: roadTotal, sanTotal: sanTotal };
+      capped: capped, moves: moves, vehMoves: vehMoves, foldedNight: foldedNight, leftSan: dropped.concat(sanQ).sort(function (a, b) { return a.planDate < b.planDate ? -1 : 1; }), roadNoDat: roadNoDat, reused: reused, nightRows: nightRows, roadTotal: roadTotal, sanTotal: sanTotal };
   }
 
 
@@ -2500,6 +2503,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     if (PLAN) FINDINGS = FINDINGS.concat(C.reviewSchedule(S.course, S.rows, PLAN, cfgReq)).concat(C.reviewMoc(S.rows, S.moc));
     if (AN && PLAN) FINDINGS = FINDINGS.concat(C.reviewCross(AN, S.course, PLAN));
     if (LB && LB.mode === 'dat') FINDINGS = FINDINGS.concat(C.reviewActual(LB, S.course, S.ao));
+    if (LB && LB.foldedNight && LB.foldedNight.length) FINDINGS.push({ who: 'cun', level: 'goiy', title: 'Gộp ' + LB.foldedNight.length + ' mẩu giờ đêm quá ngắn vào ca ngày', detail: LB.foldedNight.map(function (f) { return C.fmtDM(f.date) + ' ' + f.hv + ' ' + C.clock(((f.start % 1440) + 1440) % 1440) + '–' + C.clock(((f.end % 1440) + 1440) % 1440) + ' (' + Math.round(f.min) + ' phút đêm)'; }).join('; ') + '. Không tách thành dòng "Tập lái xe ban đêm" riêng.', fix: 'Thống kê giờ đêm ở tab Lọc DAT vẫn giữ nguyên số thực tế.' });
     if (LB && LB.vehMoves && LB.vehMoves.length) FINDINGS.push({ who: 'rong', level: 'tot', title: 'Gán bài đường theo loại xe thực chạy: ' + LB.vehMoves.length + ' ngày', detail: LB.vehMoves.map(function (m) { return C.fmtDM(m.date) + ' chạy ' + (m.grp === 'con' ? 'xe con' : 'xe tải/Isuzu') + ' → bài ' + m.bai; }).join('; ') + '.', fix: 'Theo sổ xe. Nếu xe nào phân loại sai, đổi ở mục Từng xe (tab Lọc DAT).' });
     if (STD) FINDINGS = FINDINGS.concat(C.reviewStandard(STD, S.course, reqFor(S.course.hang)));
     FINDINGS = FINDINGS.concat(C.reviewHabits(H, {
@@ -3658,7 +3662,7 @@ if (typeof module !== 'undefined') module.exports = Core;
 
 </script>
 
-<script>(function(){var V='20261017-0303';
+<script>(function(){var V='20261017-0314';
 if(!('serviceWorker' in navigator)||(location.protocol!=='https:'&&location.hostname!=='localhost'))return;
 navigator.serviceWorker.register('sw.js').then(function(r){r.update();});
 var had=!!navigator.serviceWorker.controller;
