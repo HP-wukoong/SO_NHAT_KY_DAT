@@ -398,7 +398,7 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13px
       <label class="f">Tối đa 1 ngày (giờ)<input type="number" id="aMaxDay" min="1" max="24" step="0.5"></label>
       <label class="f">Ngày không có DAT<select id="aFill"><option value="auto">Xếp bài sân theo lịch (tự dời nếu trùng ngày chạy đường)</option><option value="tonghop">Luôn lấp bài hình tổng hợp</option></select></label>
       <label class="f">Bài lấp ngày trống<select id="aFillRow"></select></label>
-      <label class="f">Làm tròn km<select id="aDec"><option value="0">Số nguyên</option><option value="1">1 số lẻ</option></select></label>
+      <label class="f">Km 2 ca lệch nhau từ<input type="number" id="aDiffMin" min="0" max="200" step="1" style="width:80px"></label><label class="f">đến (km)<input type="number" id="aDiffMax" min="0" max="200" step="1" style="width:80px"></label><div class="hint" style="margin:0;flex-basis:100%">Km luôn là số nguyên: mỗi ngày tổng km làm tròn, 2 ca chia số nguyên lệch nhau trong khoảng trên, cộng lại đúng tổng ngày.</div>
       <div class="hint" id="aExample" style="margin:0;flex-basis:100%"></div>
     </div>
     <div class="aopts" id="stdBox" style="background:var(--panel)">
@@ -1212,6 +1212,70 @@ var Core = (function () {
   }
 
 
+
+  /* ---------- KM SỐ NGUYÊN: mỗi ngày tổng km là số nguyên, chia 2 ca lệch nhau 10–50 km, cộng lại đúng tổng ngày ---------- */
+  function integerKm(lb, o) {
+    if (!lb || !lb.lines || !lb.lines.length) return lb;
+    o = o || {};
+    var dMin = o.diffMin == null ? 10 : o.diffMin, dMax = o.diffMax == null ? 50 : o.diffMax;
+    var byDay = {}, days = [];
+    lb.lines.forEach(function (l) { if (!byDay[l.date]) { byDay[l.date] = []; days.push(l.date); } byDay[l.date].push(l); });
+    // 1) tổng km từng ngày làm tròn số nguyên, giữ đúng tổng cả sổ (phương pháp phần dư lớn nhất)
+    var raw = days.map(function (d) { return byDay[d].reduce(function (t, l) { return t + (+l.km || 0); }, 0); });
+    var grand = Math.round(raw.reduce(function (a, b) { return a + b; }, 0));
+    var ints = raw.map(Math.floor), rest = grand - ints.reduce(function (a, b) { return a + b; }, 0);
+    raw.map(function (v, i) { return { i: i, f: v - Math.floor(v) }; }).sort(function (a, b) { return b.f - a.f || a.i - b.i; })
+      .forEach(function (x) { if (rest > 0) { ints[x.i]++; rest--; } });
+    function isNightLine(l) { return l.segs && l.segs.length && l.segs.every(function (s) { return s.k === 'dem'; }); }
+    function setKm(l, v) {
+      l.km = v;
+      if (l.segs && l.segs.length) {
+        var tot = l.segs.reduce(function (t, s) { return t + (+s.km || 0); }, 0), acc = 0;
+        l.segs.forEach(function (s, j) {
+          if (j === l.segs.length - 1) s.km = v - acc;
+          else { s.km = tot > 0 ? Math.round(v * (+s.km || 0) / tot) : 0; acc += s.km; }
+        });
+      }
+    }
+    days.forEach(function (d, i) {
+      var ls = byDay[d], T = ints[i];
+      var withKm = ls.filter(function (l) { return (+l.km || 0) > 0; });
+      if (!withKm.length) { ls.forEach(function (l) { if (l.km) setKm(l, 0); }); return; }
+      // 2) chia tổng ngày cho các dòng theo tỉ lệ, số nguyên
+      var sum = withKm.reduce(function (t, l) { return t + l.km; }, 0);
+      var exact = withKm.map(function (l) { return T * l.km / sum; });
+      var iv = exact.map(Math.floor), r = T - iv.reduce(function (a, b) { return a + b; }, 0);
+      exact.map(function (v, j) { return { j: j, f: v - Math.floor(v) }; }).sort(function (a, b) { return b.f - a.f || a.j - b.j; })
+        .forEach(function (x) { if (r > 0) { iv[x.j]++; r--; } });
+      withKm.forEach(function (l, j) { setKm(l, iv[j]); });
+      // 3) hai ca ngày thường (không tính dòng đêm, dòng xe STĐ): lệch nhau 10–50 km
+      var reg = withKm.filter(function (l) { return !isNightLine(l) && !l.isStd; }).sort(function (a, b) { return b.km - a.km; });
+      if (reg.length >= 2) {
+        var A = reg[0], B = reg[1], P = A.km + B.km;
+        var hi = Math.min(dMax, P - 2), lo = dMin;
+        if (hi >= lo) {
+          var par = P % 2, cands = [];
+          for (var k = lo; k <= hi; k++) if (k % 2 === par) cands.push(k);
+          if (cands.length) {
+            var cur = A.km - B.km, diff;
+            if (cur >= lo && cur <= hi) diff = cur;
+            else diff = cands[hashStr(d + '#km') % cands.length];
+            // ca dài hơn (nhiều phút hơn) nhận phần km lớn hơn
+            var big = A.minutes >= B.minutes ? A : B, small = big === A ? B : A;
+            setKm(big, (P + diff) / 2); setKm(small, (P - diff) / 2);
+          }
+        }
+      }
+    });
+    lb.lines.forEach(function (l) { if (l.need && l.need.km) l.need.km = Math.ceil(l.need.km); if (l.addKm) l.addKm = Math.round(l.addKm * 10) / 10; });
+    var t = lb.totals; if (t) {
+      t.km = 0; t.roadKm = 0; t.nightKm = 0;
+      lb.lines.forEach(function (l) { t.km += l.km || 0; if (l.road) t.roadKm += l.km || 0; (l.segs || []).forEach(function (s) { if (s.k === 'dem') t.nightKm += s.km || 0; }); });
+      if (t.perHV) { var n = t.perHV.km ? (raw.reduce(function (a, b) { return a + b; }, 0) / t.perHV.km) : 1; n = Math.max(1, Math.round(n)); t.perHV.km = t.km / n; t.perHV.roadKm = t.roadKm / n; t.perHV.nightKm = t.nightKm / n; }
+    }
+    if (lb.std) { lb.std.afterKm = t ? t.km : lb.std.afterKm; }
+    return lb;
+  }
   /* ---------- BỐ TRÍ ĐỦ CHUẨN SỔ (TT 17/2026/TT-BXD: giờ/HV và km/HV × số HV) ---------- */
   // o: {auto, caMax (phút/ca), sanKmh (km/giờ tối đa trên sân), maxDayH}
   function arrangeToStandard(lb, course, req, o) {
@@ -1889,7 +1953,7 @@ var Core = (function () {
     parseTime: parseTime, fmtHM: fmtHM, clock: clock, num: num, r2: r2, plateFmt: plateFmt, plateCompact: plateCompact, plateFromFilename: plateFromFilename,
     extractFleet: extractFleet, reviewFleet: reviewFleet, FLEET_TYPE: FLEET_TYPE, fleetType: fleetType,
     readWorkbook: readWorkbook, rowsFromText: rowsFromText, extractDAT: extractDAT, extractStudents: extractStudents, extractSchedule: extractSchedule,
-    scheduleRow: scheduleRow, buildActualLogbook: buildActualLogbook, reviewActual: reviewActual, arrangeToStandard: arrangeToStandard, reviewStandard: reviewStandard, splitDay: splitDay, isRoad: isRoad, isCabin: isCabin, isSectionHeader: isSectionHeader, nDays: nDays, buildLogbook: buildLogbook,
+    scheduleRow: scheduleRow, buildActualLogbook: buildActualLogbook, reviewActual: reviewActual, arrangeToStandard: arrangeToStandard, integerKm: integerKm, reviewStandard: reviewStandard, splitDay: splitDay, isRoad: isRoad, isCabin: isCabin, isSectionHeader: isSectionHeader, nDays: nDays, buildLogbook: buildLogbook,
     dedupeSessions: dedupeSessions, analyzeDAT: analyzeDAT, reviewDAT: reviewDAT, reviewSchedule: reviewSchedule, reviewCross: reviewCross, reviewHabits: reviewHabits, reviewMoc: reviewMoc,
     PERSONA: PERSONA, PRESETS: PRESETS, REQS: REQS, KT_FORMS: KT_FORMS, ktTheory: ktTheory, ktScore: ktScore, ktTheoryResult: ktTheoryResult, presetRows: presetRows, presetMoc: presetMoc, fromDateObj: fromDateObj, THU: THU
   };
@@ -1970,7 +2034,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     showTurns: (learned('showTurns') || {}).v === 'true',
     image: null, tab: 'dat', filterWho: null, filterLv: null,
     soMode: D.soMode || (learned('soMode') || {}).v || 'lich',
-    ao: Object.assign({ hoursFrom: 'lich', offMin: 5, offMax: 5, kmLongPct: 56.7, splitMin: 2, fill: 'auto', fillRowId: null, kmDec: 0, maxDayH: 10 }, D.ao || {})
+    ao: Object.assign({ hoursFrom: 'lich', offMin: 5, offMax: 5, kmLongPct: 56.7, splitMin: 2, fill: 'auto', fillRowId: null, kmDec: 0, kmDiffMin: 10, kmDiffMax: 50, maxDayH: 10 }, D.ao || {})
   };
   (function () { var L;
     if (!D.ao) { if ((L = learned('aHours'))) S.ao.hoursFrom = L.v; if ((L = learned('aKmPct'))) S.ao.kmLongPct = +L.v; if ((L = learned('aFill'))) S.ao.fill = L.v;
@@ -2491,6 +2555,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     var anSo = AN && S.soPlate ? C.analyzeDAT(S.sessions.filter(function (x) { return x.plate === S.soPlate; }), { students: S.students, z: S.z, plateType: plateTypeMap() }) : AN;
     LB = PLAN && S.soMode === 'dat' && anSo ? C.buildActualLogbook(cs, S.rows, anSo, S.ao) : (PLAN ? C.buildLogbook(cs, S.rows) : null);
     STD = LB ? C.arrangeToStandard(LB, S.course, reqFor(S.course.hang), Object.assign({}, S.stdOpt, { maxDayH: S.ao.maxDayH || 10 })) : null;
+    if (LB) C.integerKm(LB, { diffMin: S.ao.kmDiffMin == null ? 10 : S.ao.kmDiffMin, diffMax: S.ao.kmDiffMax == null ? 50 : Math.max(S.ao.kmDiffMax, S.ao.kmDiffMin || 0) });
     var cfgReq = { req: reqFor(S.course.hang) };
     FINDINGS = [];
     if (AN) FINDINGS = FINDINGS.concat(C.reviewDAT(AN, { req: req() }));
@@ -2757,11 +2822,11 @@ if (typeof module !== 'undefined') module.exports = Core;
     $('#modeHint').textContent = dat ? (AN ? 'Ngày có DAT ghi bài đường giao thông, phần chạy sau 18:00 ghi bài ban đêm, bài sân trùng ngày tự dời.' : 'Chưa có DAT: nạp file ở tab Lọc DAT, tạm hiển thị theo lịch.') : 'Giờ và km chia theo lịch như sổ cũ.';
     var o = S.ao;
     $('#aHours').value = o.hoursFrom; $('#aOffMin').value = o.offMin; $('#aOffMax').value = o.offMax; $('#aKmPct').value = o.kmLongPct;
-    $('#aSplit').value = o.splitMin; $('#aMaxDay').value = o.maxDayH == null ? 10 : o.maxDayH; $('#aFill').value = o.fill; $('#aDec').value = String(o.kmDec || 0);
+    $('#aSplit').value = o.splitMin; $('#aMaxDay').value = o.maxDayH == null ? 10 : o.maxDayH; $('#aFill').value = o.fill; $('#aDiffMin').value = o.kmDiffMin == null ? 10 : o.kmDiffMin; $('#aDiffMax').value = o.kmDiffMax == null ? 50 : o.kmDiffMax;
     var opts = S.rows.filter(function (r) { return r.tu && !C.isRoad(r.phamVi) && !C.isCabin(r) && !C.isSectionHeader(r); });
     $('#aFillRow').innerHTML = '<option value="">Tự chọn (bài tổng hợp)</option>' + opts.map(function (r) { return '<option value="' + esc(r.id) + '"' + (o.fillRowId === r.id ? ' selected' : '') + '>Bài ' + esc(r.bai) + ': ' + esc(r.ten) + '</option>'; }).join('');
     var ex = C.splitDay(480, 150, '2026-09-12', o);
-    $('#aExample').textContent = 'Ví dụ ngày 8 giờ, 150 km → ' + ex.map(function (p) { return C.fmtHM(p.min).replace(':', 'h') + ' · ' + vn(p.km, o.kmDec || 0) + ' km'; }).join('  +  ') + (LB && LB.fillLesson ? '  ·  Bài lấp: ' + LB.fillLesson.bai + ' ' + LB.fillLesson.ten : '');
+    $('#aExample').textContent = 'Ví dụ ngày 8 giờ, 150 km → ' + ex.map(function (p) { return C.fmtHM(p.min).replace(':', 'h') + ' · ' + vn(Math.round(p.km), 0) + ' km'; }).join('  +  ') + (LB && LB.fillLesson ? '  ·  Bài lấp: ' + LB.fillLesson.bai + ' ' + LB.fillLesson.ten : '');
   }
   function renderStd() {
     var R = reqFor(S.course.hang), n = S.course.hvThuc;
@@ -3619,7 +3684,7 @@ if (typeof module !== 'undefined') module.exports = Core;
   var offKey = function () { return S.ao.offMin + '-' + S.ao.offMax; };
   bindAo('#aHours', 'hoursFrom', String, 'aHours'); bindAo('#aOffMin', 'offMin', function (v) { return parseInt(v, 10); }, 'aOff', offKey);
   bindAo('#aOffMax', 'offMax', function (v) { return parseInt(v, 10); }, 'aOff', offKey); bindAo('#aKmPct', 'kmLongPct', C.num, 'aKmPct');
-  bindAo('#aSplit', 'splitMin', C.num); bindAo('#aMaxDay', 'maxDayH', C.num); bindAo('#aFill', 'fill', String, 'aFill'); bindAo('#aFillRow', 'fillRowId', function (v) { return v || null; }); bindAo('#aDec', 'kmDec', function (v) { return parseInt(v, 10); });
+  bindAo('#aSplit', 'splitMin', C.num); bindAo('#aMaxDay', 'maxDayH', C.num); bindAo('#aFill', 'fill', String, 'aFill'); bindAo('#aFillRow', 'fillRowId', function (v) { return v || null; }); bindAo('#aDiffMin', 'kmDiffMin', function (v) { return Math.max(0, parseInt(v, 10) || 0); }); bindAo('#aDiffMax', 'kmDiffMax', function (v) { return Math.max(0, parseInt(v, 10) || 0); });
   $('#sdGio').onchange = function () { var v = C.num(this.value); var o = S.reqOver[S.course.hang] = S.reqOver[S.course.hang] || {}; if (v == null) delete o.soGio; else o.soGio = v; act('Sửa chuẩn giờ sổ', S.course.hang + ' = ' + v); recompute(); };
   $('#sdKm').onchange = function () { var v = C.num(this.value); var o = S.reqOver[S.course.hang] = S.reqOver[S.course.hang] || {}; if (v == null) delete o.soKm; else o.soKm = v; act('Sửa chuẩn km sổ', S.course.hang + ' = ' + v); recompute(); };
   $('#sdAuto').onchange = function () { S.stdOpt.auto = this.checked; learn('sdAuto', String(this.checked)); recompute(); };
@@ -3662,7 +3727,7 @@ if (typeof module !== 'undefined') module.exports = Core;
 
 </script>
 
-<script>(function(){var V='20261017-0314';
+<script>(function(){var V='20261116-1530';
 if(!('serviceWorker' in navigator)||(location.protocol!=='https:'&&location.hostname!=='localhost'))return;
 navigator.serviceWorker.register('sw.js').then(function(r){r.update();});
 var had=!!navigator.serviceWorker.controller;
