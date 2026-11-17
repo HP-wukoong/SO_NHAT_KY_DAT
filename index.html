@@ -1150,7 +1150,7 @@ var Core = (function () {
         var c2 = x.dayKm - c1, nk = hN ? x.nightKm : 0;
         var two = hD && !(x.dayKm < (o.oneCaKm == null ? 40 : o.oneCaKm) && x.dayMin <= 90);
         if (two && (c1 < 0.5 || x.dayKm - c1 < 0.5)) { c1 = x.dayKm / 2; c2 = x.dayKm / 2; }
-        dl.push({ date: dt, night: hN, grp: dayGroup(x), two: two, hasDay: hD, km: x.dayKm + nk, dayKm: x.dayKm, nk: nk, c1: c1, c2: c2 });
+        dl.push({ i: dl.length, date: dt, night: hN, grp: dayGroup(x), two: two, hasDay: hD, km: x.dayKm + nk, dayKm: x.dayKm, nk: nk, c1: c1, c2: c2 });
       }
       var L = [], idx = {};
       roadByDate.forEach(function (l) {
@@ -1162,18 +1162,30 @@ var Core = (function () {
         u.n = u.lines.length; u.first = u.lines[0].date; u.last = u.lines[u.lines.length - 1].date;
         u.T = u.lines.reduce(function (t, l) { return t + (+l.km || 0); }, 0); u.t = u.T / u.n;
         var tt = strip(u.lines[0].ten); u.extraOk = /PHUC TAP|CO TAI/.test(tt) && !/QUAY DAU|Q\.? ?DAU|ON LUYEN/.test(tt);
+        u.endOnly = /ON LUYEN|SAT HACH/.test(tt);                       // ôn luyện sát hạch: luôn ở cuối khóa
+        u.midLate = !u.endOnly && /QUAY DAU|Q\.? ?DAU|T\.? ?PHO/.test(tt); // quay đầu xe, thành phố: từ giữa khóa trở đi
       });
       var anyExtra = L.some(function (u) { return u.extraOk; });
       var m = dl.length, nL = L.length;
+      var endN = L.reduce(function (t, u) { return t + (u.endOnly ? u.n : 0); }, 0);
       function dist(date, u) { return date < u.first ? diffDays(date, u.first) : date > u.last ? diffDays(u.last, date) : 0; }
-      function pen(d, u) { var c = 0; if (d.night && !u.night) c += 400; else if (!d.night && u.night) c += 60; if (hasGrp && d.grp && u.grp && d.grp !== u.grp) c += 200; return c + Math.min(30, dist(d.date, u)) * 0.5; }
-      function penA(d, u) { return pen({ date: d.date, night: false, grp: d.grp }, u); } // ca đầu: không mang phần đêm
+      function posPen(d, u) {
+        if (d.i == null) return 0;
+        if (u.endOnly) { var rk = m - 1 - d.i; return rk < u.n ? 0 : rk < u.n + 3 ? 20 : 600 + rk * 20; }
+        if (u.midLate) { var half = Math.floor(m * 0.5); return d.i < half ? 600 + (half - d.i) * 20 : (endN && d.i >= m - endN ? 250 : 0); }
+        if (endN && d.i >= m - endN) return 250; // ngày cuối dành cho bài ôn luyện
+        return 0;
+      }
+      function pen(d, u) { var c = posPen(d, u); if (d.night && !u.night) c += 400; else if (!d.night && u.night) c += 60; if (hasGrp && d.grp && u.grp && d.grp !== u.grp) c += 200; return c + Math.min(30, dist(d.date, u)) * 0.5; }
+      function penA(d, u) { return pen({ i: d.i, date: d.date, night: false, grp: d.grp }, u); } // ca đầu: không mang phần đêm
       function fit(km, u) { return Math.abs(km - u.t) / Math.max(u.t, 40) * 100; }
       // 1) ghép ngày ↔ "chỗ" của bài (mỗi bài n chỗ + chỗ dư) bằng thuật toán Hungary, chi phí = lệch km/ngày + phạt đêm/xe/ngày
       var cols = [];
       L.forEach(function (u, j) { for (var k = 0; k < u.n; k++) cols.push({ j: j, extra: 0 }); });
       var need = Math.max(0, m - cols.length);
       if (need) L.forEach(function (u, j) { for (var k = 0; k < need; k++) cols.push({ j: j, extra: !anyExtra ? 15 : u.extraOk ? 5 : 150 }); });
+      // bài ôn luyện có thể nhận thêm 1–2 ngày cuối (vd ngày cuối quá ít km) để vẫn đứng sau cùng
+      L.forEach(function (u, j) { if (u.endOnly) for (var k = 0; k < 3; k++) cols.push({ j: j, extra: 30 }); });
       var nC = cols.length, INF = 1e12;
       function hungarian(cost, n, mm) { // n hàng ≤ mm cột
         var u = new Array(n + 1).fill(0), v = new Array(mm + 1).fill(0), p = new Array(mm + 1).fill(0), way = new Array(mm + 1).fill(0);
@@ -1241,7 +1253,7 @@ var Core = (function () {
           if (!(u.T > 0) || S[j] >= u.T) return;
           dl.forEach(function (d, i) {
             var s = asg[i]; if (!d.hasDay || s.a !== s.b || s.a === j) return;
-            var don = s.a; if (!(S[don] > L[don].T * 1.05)) return;
+            var don = s.a; if (!(S[don] > L[don].T * 1.05) && !(u.endOnly && dl[i].i >= m - (u.n + 3))) return;
             var opts = d.two ? ['a', 'b', 'ab'] : ['ab'];
             opts.forEach(function (side) {
               if (s.a !== s.b) return;
@@ -2480,8 +2492,9 @@ if (typeof module !== 'undefined') module.exports = Core;
   })();
   if (!S.classes) { S.classes = {}; Object.keys(S.plates).forEach(function (k) { var r = S.plates[k]; if (r.names && r.names.length) S.classes['Lớp xe ' + C.plateFmt(k)] = { plates: [k], names: r.names.slice() }; }); }
 
-  var APP_VER = '3.7', APP_DATE = '17/11/2026';
+  var APP_VER = '3.8', APP_DATE = '17/11/2026';
   var CHANGELOG = [
+    ['3.8', '17/11/2026', 'Thứ tự bài đường: bài ôn luyện sát hạch luôn ở cuối khóa (sau khi học xong các bài khác); bài đường phức tạp thành phố, quay đầu xe chỉ xếp từ giữa khóa trở đi.'],
     ['3.7', '17/11/2026', 'Gán bài đường theo km: ngày nhiều km vào bài chỉ tiêu lớn, ngày ít km vào bài chỉ tiêu nhỏ; đủ ngày từng bài, tổng km mỗi bài sát lịch (±20%), đổi thứ tự bài linh động; thiếu ngày thì tách ca (km theo phiên thật). Ngày DAT dưới 20 km có chạy đêm thì gộp vào bài đêm, ban ngày ghi bài tổng hợp. Bảng Km từng bài lịch ↔ sổ.'],
     ['3.6', '17/11/2026', 'File Excel: km lấy từ DAT thực tế hiện dấu * phía trước (vd *96). Ô vẫn là số nên cộng tổng bình thường.'],
     ['3.5', '17/11/2026', 'Khối Kiểm tra hoàn thành khóa (Sổ TDTH) tính giờ, km theo hạng và số HV có mặt; địa điểm lấy theo lịch (nơi kiểm tra, tuyến đường ôn luyện). Dòng chạy đêm lấy địa điểm của bài đêm trong lịch, không lấy tuyến của bài đường khác.'],
