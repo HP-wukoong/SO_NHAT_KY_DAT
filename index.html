@@ -1294,8 +1294,10 @@ var Core = (function () {
           if (!hasDay && !hasNight && firstStd) { firstStd.datSessions = dd.ses; firstStd.datKm = dd.km; firstStd.datH = dd.h; }
         }
         if (hasNight) {
-          var nb = combo ? baiTokens(unit.bai).slice(-1)[0] : nightDefault.bai;
-          var nInfo = { rowId: unit ? unit.rowId : nightDefault.rowId, bai: nb, ten: 'Tập lái xe ban đêm', phamVi: (unit && unit.phamVi) || nightDefault.phamVi, road: true, night: true, planDate: unit ? unit.date : null };
+          var nu = combo ? unit : null;
+          if (!nu) { var nc = roadByDate.filter(function (l) { return isNightCombo(l); }); nc.sort(function (a, b) { return Math.abs(diffDays(a.date, date)) - Math.abs(diffDays(b.date, date)); }); nu = nc[0] || null; }
+          var nb = nu ? baiTokens(nu.bai).slice(-1)[0] : nightDefault.bai;
+          var nInfo = { rowId: nu ? nu.rowId : nightDefault.rowId, bai: nb, ten: 'Tập lái xe ban đêm', phamVi: (nu && nu.phamVi) || nightDefault.phamVi || (unit && unit.phamVi), road: true, night: true, planDate: nu ? nu.date : null };
           // giờ đêm lấy đúng thực tế từng phiên DAT (phần nằm trong 18:00–05:00)
           dd.nightParts.forEach(function (np, k) {
             var kmR = roundKm(np.km);
@@ -2422,8 +2424,9 @@ if (typeof module !== 'undefined') module.exports = Core;
   })();
   if (!S.classes) { S.classes = {}; Object.keys(S.plates).forEach(function (k) { var r = S.plates[k]; if (r.names && r.names.length) S.classes['Lớp xe ' + C.plateFmt(k)] = { plates: [k], names: r.names.slice() }; }); }
 
-  var APP_VER = '3.4', APP_DATE = '17/11/2026';
+  var APP_VER = '3.5', APP_DATE = '17/11/2026';
   var CHANGELOG = [
+    ['3.5', '17/11/2026', 'Khối Kiểm tra hoàn thành khóa (Sổ TDTH) tính giờ, km theo hạng và số HV có mặt; địa điểm lấy theo lịch (nơi kiểm tra, tuyến đường ôn luyện). Dòng chạy đêm lấy địa điểm của bài đêm trong lịch, không lấy tuyến của bài đường khác.'],
     ['3.4', '17/11/2026', 'File xuất (Sổ TDTH, Sổ nhật ký) tô màu xen kẽ từng ngày cho dễ nhìn; km hiện số nguyên (44 thay vì 44.00).'],
     ['3.3', '17/11/2026', 'Dòng đầu mục (I, II, III…) không tính giờ vào sổ. Thiếu km so với chuẩn TT17 thì tự bổ sung km vào các bài trong sân tập lái cho đủ km tối thiểu.'],
     ['3.2', '17/11/2026', 'Kiểm tra km thực tế: đối chiếu DAT ↔ sổ từng ngày, từng học viên; báo ngày thiếu/sai/lệch km, học viên chưa có DAT, tên DAT gõ khác (có nút Gộp). Không còn bỏ sót ngày DAT ít km, ngày DAT ngoài khoảng lịch, phiên STĐ khi lịch không có bài STĐ. Sổ xuất có thêm sheet Kiểm tra km DAT.'],
@@ -3707,13 +3710,12 @@ if (typeof module !== 'undefined') module.exports = Core;
     var kt = S.moc.filter(function (m) { return /KIEM TRA XET/.test(C.strip(m.ten)); })[0];
     aoa.push([]);
     var ktStart = aoa.length;
+    var KTB = ktBlock(c, kt);
     aoa.push([kt ? isoD(kt.tu) : '', 'Ktra xét HT khóa học', '', '', '']);
     aoa.push(['', '(' + (n < 10 ? '0' : '') + n + ' Học viên)', '', '', '']);
-    aoa.push(['', '- Chữ chi', 'Trung tâm SH N.Hội', 1 / 24, 1]);
-    aoa.push(['', '- Hình', '//', 1.5 / 24, 8]);
-    aoa.push(['', '- Đường', 'QL 19C - ĐT640', 1 / 24, 12]);
+    KTB.parts.forEach(function (p, i) { aoa.push(['', p.ten, i && p.noi === KTB.parts[i - 1].noi ? '//' : p.noi, p.min / 1440, p.km]); });
     var tot = aoa.length;
-    var sumMin = LB.lines.reduce(function (a, l) { return a + l.minutes; }, 0), sumKm = LB.lines.reduce(function (a, l) { return a + l.km; }, 0) + 21;
+    var sumMin = LB.lines.reduce(function (a, l) { return a + l.minutes; }, 0), sumKm = LB.lines.reduce(function (a, l) { return a + l.km; }, 0) + KTB.km;
     aoa.push(['', 'TỔNG CỘNG', '', { f: 'SUM(D4:D' + lastData + ')', v: sumMin / 1440 }, { f: 'SUM(E4:E' + (tot) + ')', v: sumKm }, { f: 'E' + (tot + 1) + '/' + n, v: sumKm / n }, { f: (Rq.soGio || 0) + '*' + n, v: (Rq.soGio || 0) * n }, { f: 'G' + (tot + 1) + '/24', v: (Rq.soGio || 0) * n / 24 }]);
     aoa.push(['', '', '', 'Tổng giờ', 'Tổng km', 'Km/1 HV', 'Chuẩn giờ (' + Rq.soGio + '×' + n + ')', 'Chuẩn quy ra ngày']);
     var okH = sumMin >= (Rq.soGio || 0) * 60 * n, okK = sumKm / n >= (Rq.soKm || 0);
@@ -3751,6 +3753,18 @@ if (typeof module !== 'undefined') module.exports = Core;
     saveWb(wb, 'So_TDTH_' + c.hang.replace('đ', 'd') + '_K' + khoaNum + (S.soPlate ? '_' + S.soPlate : '') + '.xlsx');
   }
   function isoD(d) { var p = d.split('-'); return new Date(+p[0], +p[1] - 1, +p[2], 12); }
+  // Kiểm tra hoàn thành khóa: lịch ghi cho đủ lớp (B: 5 HV ~3 giờ, 17 km; C1: 6 HV ~3 giờ 30, 22 km) → quy theo HV có mặt
+  function ktBlock(c, kt) {
+    var full = c.hang === 'C1' ? { min: 210, km: 22, hv: 6 } : { min: 180, km: 17, hv: 5 };
+    var hvL = c.hvLop || full.hv, n = c.hvThuc || hvL;
+    var totMin = Math.round(full.min / full.hv * n / 5) * 5, totKm = Math.max(3, Math.round(full.km / full.hv * n));
+    var mCc = Math.max(5, Math.round(totMin * 2 / 7 / 5) * 5), mHinh = Math.max(5, Math.round(totMin * 3 / 7 / 5) * 5), mDuong = Math.max(5, totMin - mCc - mHinh);
+    var kCc = Math.max(1, Math.round(totKm * 0.05)), kHinh = Math.max(1, Math.round(totKm * 0.38)), kDuong = Math.max(1, totKm - kCc - kHinh);
+    var noi = (kt && kt.noi) || 'Sân tập lái CSHN';
+    var road = S.rows.filter(function (r) { return C.isRoad(r.phamVi) && /ON LUYEN|SAT HACH/.test(C.strip(r.ten)); }).slice(-1)[0];
+    var noiDuong = road ? road.phamVi : 'QL19B - ĐT640';
+    return { parts: [{ ten: '- Chữ chi', noi: noi, min: mCc, km: kCc }, { ten: '- Hình', noi: noi, min: mHinh, km: kHinh }, { ten: '- Đường', noi: noiDuong, min: mDuong, km: kDuong }], km: kCc + kHinh + kDuong, min: mCc + mHinh + mDuong, n: n };
+  }
   var NIGHT_TXT = /\s*\+\s*(TL|T\.?\s*lái|tập lái)\s*(xe\s*)?ban đêm/i;
   $('#expTdth').onclick = function () {
     if (STD && !STD.ok) toast('cop', 'Sổ chưa đủ chuẩn TT 17/2026', 'Thiếu ' + (STD.shortMin ? C.fmtHM(STD.shortMin) + ' giờ ' : '') + (STD.shortKm ? C.r2(STD.shortKm) + ' km' : '') + '. File vẫn xuất, các dòng cần bổ sung được bôi đỏ.');
