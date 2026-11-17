@@ -2424,8 +2424,9 @@ if (typeof module !== 'undefined') module.exports = Core;
   })();
   if (!S.classes) { S.classes = {}; Object.keys(S.plates).forEach(function (k) { var r = S.plates[k]; if (r.names && r.names.length) S.classes['Lớp xe ' + C.plateFmt(k)] = { plates: [k], names: r.names.slice() }; }); }
 
-  var APP_VER = '3.5', APP_DATE = '17/11/2026';
+  var APP_VER = '3.6', APP_DATE = '17/11/2026';
   var CHANGELOG = [
+    ['3.6', '17/11/2026', 'File Excel: km lấy từ DAT thực tế hiện dấu * phía trước (vd *96). Ô vẫn là số nên cộng tổng bình thường.'],
     ['3.5', '17/11/2026', 'Khối Kiểm tra hoàn thành khóa (Sổ TDTH) tính giờ, km theo hạng và số HV có mặt; địa điểm lấy theo lịch (nơi kiểm tra, tuyến đường ôn luyện). Dòng chạy đêm lấy địa điểm của bài đêm trong lịch, không lấy tuyến của bài đường khác.'],
     ['3.4', '17/11/2026', 'File xuất (Sổ TDTH, Sổ nhật ký) tô màu xen kẽ từng ngày cho dễ nhìn; km hiện số nguyên (44 thay vì 44.00).'],
     ['3.3', '17/11/2026', 'Dòng đầu mục (I, II, III…) không tính giờ vào sổ. Thiếu km so với chuẩn TT17 thì tự bổ sung km vào các bài trong sân tập lái cho đủ km tối thiểu.'],
@@ -3584,13 +3585,13 @@ if (typeof module !== 'undefined') module.exports = Core;
     var c = S.course, t = LB.totals;
     var wb = XLSX.utils.book_new();
     var title = 'SỔ NHẬT KÝ GIẢNG DẠY - KHÓA ' + (c.khoa || '') + ' - HẠNG ' + c.hang;
-    var aoa = [[title], ['Năm học ' + c.nam + ' · Số học viên thực tế: ' + c.hvThuc + ' / ' + c.hvLop + ' (tỉ lệ ' + Math.round(LB.ratio * 100) + '%)' + (c.giaoVien ? ' · Giáo viên: ' + c.giaoVien : '')], [],
+    var aoa = [[title], ['Năm học ' + c.nam + ' · Số học viên thực tế: ' + c.hvThuc + ' / ' + c.hvLop + ' (tỉ lệ ' + Math.round(LB.ratio * 100) + '%)' + (c.giaoVien ? ' · Giáo viên: ' + c.giaoVien : '') + (LB.mode === 'dat' ? ' · (*) km thực tế theo DAT' : '')], [],
       ['Ngày tháng', 'Nội dung bài giảng', 'Địa điểm', 'Số giờ thực hành', 'Số km thực hành', 'Họ tên học viên vắng mặt', '', 'Số nhiên liệu sử dụng', 'Chữ ký', '', 'Khung giờ'],
       ['', '', '', '', '', 'Có lý do', 'Không có lý do', '', 'Giáo viên', 'Trưởng ban nghề', '']];
-    var needRows = {}, bandRows = {}, bDay = -1, bPrev = null;
+    var needRows = {}, bandRows = {}, datRows = {}, bDay = -1, bPrev = null;
     LB.lines.forEach(function (l) {
       if (l.need) needRows[aoa.length] = 1;
-      if (l.date !== bPrev) { bDay++; bPrev = l.date; } bandRows[aoa.length] = bDay % 2;
+      if (l.date !== bPrev) { bDay++; bPrev = l.date; } bandRows[aoa.length] = bDay % 2; if (l.src === 'dat' && l.km) datRows[aoa.length] = 1;
       aoa.push([C.fmtDMY(l.date), l.ten, l.phamVi, l.minutes / 1440, l.km || '', '', '', '', '', '', l.segs.map(function (s) { return (s.k === 'dem' ? 'Đêm ' : '') + C.clock(s.start) + '–' + C.clock(s.end); }).join('; ') + (l.need ? ' · CẦN BỔ SUNG ~' + C.fmtHM(l.need.min) + (l.need.km ? ' / ' + C.r2(l.need.km) + ' km' : '') : '')]);
     });
     var first = 6, lastR = aoa.length;
@@ -3613,7 +3614,7 @@ if (typeof module !== 'undefined') module.exports = Core;
       else if (r >= 5 && r < lastR + 4) {
         var s = st({ alignment: { vertical: 'center', wrapText: true, horizontal: col === 0 || col >= 3 && col <= 4 ? 'center' : 'left' } });
         if (col === 3) s.numFmt = '[h]:mm';
-        if (col === 4) { s.numFmt = '0'; ws[a].z = '0'; }
+        if (col === 4) { var zf2 = datRows[r] ? '"*"0' : '0'; s.numFmt = zf2; ws[a].z = zf2; }
         if (bandRows[r] === 1 && r < lastR) s.fill = { fgColor: { rgb: 'FCE4D6' } };
         if (r >= lastR) s.font = { name: 'Times New Roman', sz: 12, bold: true };
         if (needRows[r]) { s.fill = { fgColor: { rgb: 'FFC7CE' } }; s.font = { name: 'Times New Roman', sz: 12, bold: true, color: { rgb: '9C0006' } }; }
@@ -3687,8 +3688,8 @@ if (typeof module !== 'undefined') module.exports = Core;
     var gv = (c.giaoVien || '').split(',')[0].trim();
     var plateKm = {}; LB.lines.forEach(function (l) { if (l.plate) plateKm[l.plate] = (plateKm[l.plate] || 0) + l.km; });
     var mainPlate = Object.keys(plateKm).sort(function (a, b) { return plateKm[b] - plateKm[a]; })[0] || (S.activeClass && S.classes[S.activeClass] ? S.classes[S.activeClass].plates[0] : '') || loadedPlates()[0] || '';
-    var aoa = [[(c.giaoVien || 'Giáo viên') + ' - ' + c.hang + '-' + khoaNum], [], ['STT', 'Nội dung bài giảng', 'Địa điểm', 'Thời gian', 'Km']];
-    var kinds = {}, band = {}, dayNo = -1, curPlate = null, prevDate = null, prevTen = null, prevPv = null;
+    var aoa = [[(c.giaoVien || 'Giáo viên') + ' - ' + c.hang + '-' + khoaNum], ['', '', '', '', '(*) km thực tế DAT'], ['STT', 'Nội dung bài giảng', 'Địa điểm', 'Thời gian', 'Km']];
+    var kinds = {}, datKmRow = {}, band = {}, dayNo = -1, curPlate = null, prevDate = null, prevTen = null, prevPv = null;
     function base(t) { return String(t || '').replace(NIGHT_TXT, '').trim(); }
     LB.lines.forEach(function (l) {
       var pl = l.plate || curPlate || mainPlate;
@@ -3701,6 +3702,7 @@ if (typeof module !== 'undefined') module.exports = Core;
       var pvShow = (!newDay && l.phamVi === prevPv) ? '//' : l.phamVi;
       if (l.need) kinds[aoa.length] = 'need';
       band[aoa.length] = dayNo % 2;
+      if (l.src === 'dat' && l.km) datKmRow[aoa.length] = 1;
       aoa.push([newDay ? isoD(l.date) : '', tShow, pvShow, l.minutes / 1440, l.km ? Math.round(l.km) : '']);
       if (l.need) aoa[aoa.length - 1].push('Cần bổ sung ~' + C.fmtHM(l.need.min) + (l.need.km ? ' / ' + C.r2(l.need.km) + ' km' : ''));
       if (!l.isNight) prevTen = base(l.ten);
@@ -3730,7 +3732,7 @@ if (typeof module !== 'undefined') module.exports = Core;
         if (col === 0) { sty.numFmt = 'dd/mm'; ws[a].z = 'dd/mm'; sty.alignment.horizontal = 'center'; sty.font.bold = true; }
         if (col === 3 && typeof ws[a].v === 'number') ws[a].z = r >= tot ? '[h]:mm' : 'h:mm';
         if (col === 3) { sty.numFmt = r >= tot ? '[h]:mm' : 'h:mm'; sty.alignment.horizontal = 'center'; }
-        if (col === 4 || (col === 5 && r >= tot)) { sty.numFmt = '0'; ws[a].z = '0'; sty.alignment.horizontal = 'right'; }
+        if (col === 4 || (col === 5 && r >= tot)) { var zf = col === 4 && datKmRow[r] ? '"*"0' : '0'; sty.numFmt = zf; ws[a].z = zf; sty.alignment.horizontal = 'right'; }
         if (band[r] === 1 && col <= 4) sty.fill = { fgColor: { rgb: 'FCE4D6' } };
         if (kinds[r] === 'plate') sty.font = { name: 'Times New Roman', sz: 12, bold: true, color: { rgb: '1F4E79' } };
         if (kinds[r] === 'add') sty.fill = { fgColor: { rgb: 'E2EFDA' } };
