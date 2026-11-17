@@ -1,5 +1,12 @@
 <!doctype html>
 <html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>[hidden]{display:none!important}img{max-width:100%}.ver{font-size:12px;opacity:.8;margin-left:10px;white-space:nowrap;cursor:help}
+.aud{border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.aud.ok{border-color:#2e7d32;background:rgba(46,125,50,.06)}
+.aud.bad{border-color:#c62828;background:rgba(198,40,40,.06)}
+.aud table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+.aud th,.aud td{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left}
+.aud td.n{text-align:right}
+.aud tr.x td{color:#c62828;font-weight:600}
 </style><link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#262E36"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png"></head><body>
 <title>DAT Sổ Nhật Ký</title>
 <style>
@@ -253,6 +260,7 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13px
       <input type="file" id="fileDat" multiple accept=".xls,.xlsx,.xlsm,.csv,.htm,.html,image/*" hidden>
       <input type="file" id="fileDir" multiple webkitdirectory hidden>
       <div id="plateSum" style="margin-top:10px"></div>
+      <div id="audDat" style="margin-top:10px"></div>
       <ul class="files" id="fileList"></ul>
     </div>
     <div class="card">
@@ -384,6 +392,7 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;font-size:13px
         <button class="btn pri" id="expSo">Xuất Excel sổ nhật ký</button>
       </div>
     </div>
+    <div id="audSo" style="margin:0 0 10px"></div>
     <div class="row" style="margin:0 0 10px">
       <span style="font-weight:600">Số liệu ghi sổ:</span>
       <div class="seg" role="group" aria-label="Nguồn số liệu sổ">
@@ -998,10 +1007,11 @@ var Core = (function () {
     var plan = buildLogbook(course, rows);
     if (!plan.days.length || !an) return plan;
     o = o || {};
-    var ratio = plan.ratio, caMin = course.gioCa * 60, minKm = o.minKm == null ? 5 : o.minKm;
+    var ratio = plan.ratio, caMin = course.gioCa * 60, minKm = o.minKm == null ? 0.1 : o.minKm;
     var start = plan.days[0], end = plan.days[plan.days.length - 1];
     // 1) DAT thật mỗi ngày, tách phần ngày / phần đêm
-    var datDay = {}, stdApplies = course.hang === 'Bss' || course.hang === 'C1', foldedNight = [];
+    var stdRow0 = rows.filter(function (r) { return r.vaoSo && isRoad(r.phamVi) && /\bSTD\b|SO TU DONG/.test(strip(r.ten)); })[0];
+    var datDay = {}, stdApplies = (course.hang === 'Bss' || course.hang === 'C1') && !!stdRow0, foldedNight = [];
     an.days.forEach(function (d) {
       var x = { km: 0, h: 0, dayKm: 0, dayMin: 0, nightKm: 0, nightMin: 0, ses: [], daySes: [], nightSes: [], nightParts: [], stdSes: [], stdKm: 0, stdMin: 0, std: false, who: [], plateKm: {}, grpKm: {} };
       Object.keys(d.in).forEach(function (n) {
@@ -1028,6 +1038,9 @@ var Core = (function () {
       x.nightParts.sort(function (a, b) { return a.start - b.start; });
       if (x.km >= minKm) datDay[d.date] = x;
     });
+    var start0 = start, end0 = end, outRange = [];
+    Object.keys(datDay).forEach(function (d) { if (d < start0 || d > end0) outRange.push(d); if (d < start) start = d; if (d > end) end = d; });
+    outRange.sort();
     // 2) Hàng đợi bài theo thứ tự lịch
     var roadQ = [], sanQ = [];
     plan.days.forEach(function (dt) {
@@ -1201,7 +1214,7 @@ var Core = (function () {
       return out;
     })();
     // Ít ngày trống hơn số buổi sân: bớt bớt các buổi lặp của bài nhiều ngày nhất, giữ mỗi bài ít nhất 1 buổi
-    var freeDays = 0; for (var fd = start; fd <= end; fd = addDays(fd, 1)) if (!datDay[fd]) freeDays++;
+    var freeDays = 0; for (var fd = start0; fd <= end0; fd = addDays(fd, 1)) if (!datDay[fd]) freeDays++;
     var dropped = [];
     if (o.fill !== 'tonghop') {
       var keyU = function (u) { return u.lines.map(function (l) { return l.rowId; }).join('+'); };
@@ -1224,6 +1237,7 @@ var Core = (function () {
     var di = 0;
     for (var date = start; date <= end; date = addDays(date, 1), di++) {
       var dd = datDay[date];
+      if (!dd && (date < start0 || date > end0)) continue;
       if (dd) {
         var hasDay = dd.dayKm >= 0.5 && dd.dayMin >= 5, hasNight = dd.nightKm >= 0.5 && dd.nightMin >= 5;
         var unit = null, splitA = null;
@@ -1316,7 +1330,7 @@ var Core = (function () {
     var nHV = Math.max(1, course.hvThuc);
     tot.perHV = { min: tot.min / nHV, km: tot.km / nHV, roadKm: tot.roadKm / nHV, nightMin: tot.nightMin / nHV, nightKm: tot.nightKm / nHV };
     return { lines: lines, byDay: byDay, days: days, overload: [], totals: tot, ratio: ratio, hv: hv, mode: 'dat', fillLesson: thInfo, plan: plan,
-      capped: capped, moves: moves, vehMoves: vehMoves, foldedNight: foldedNight, roadShort: roadShort, roadSplit: roadSplit, leftSan: dropped.concat(sanQ).sort(function (a, b) { return a.planDate < b.planDate ? -1 : 1; }), roadNoDat: roadNoDat, reused: reused, nightRows: nightRows, roadTotal: roadTotal, sanTotal: sanTotal };
+      capped: capped, moves: moves, vehMoves: vehMoves, foldedNight: foldedNight, roadShort: roadShort, roadSplit: roadSplit, outRange: outRange, leftSan: dropped.concat(sanQ).sort(function (a, b) { return a.planDate < b.planDate ? -1 : 1; }), roadNoDat: roadNoDat, reused: reused, nightRows: nightRows, roadTotal: roadTotal, sanTotal: sanTotal };
   }
 
 
@@ -1718,8 +1732,10 @@ var Core = (function () {
     var zs = (opts.z || []).map(strip).filter(Boolean);
     var nS = opts.night ? opts.night.start : 18 * 60, nE = opts.night ? opts.night.end : 5 * 60;
     var approx = {};
+    var alias = {}; Object.keys(opts.alias || {}).forEach(function (k) { alias[strip(k)] = up(opts.alias[k]); });
     function match(name) {
       if (exact[name]) return { who: exact[name], how: 'exact' };
+      if (alias[strip(name)] && exact[alias[strip(name)]]) return { who: alias[strip(name)], how: 'alias' };
       var s = strip(name);
       if (loose[s]) { approx[name] = loose[s]; return { who: loose[s], how: 'loose' }; }
       if (s.indexOf('Z') >= 0) for (var i = 0; i < zs.length; i++) if (s.indexOf(zs[i]) >= 0) return { who: name, how: 'z' };
@@ -1753,6 +1769,82 @@ var Core = (function () {
     });
     var dayList = Object.keys(days).sort().map(function (k) { return days[k]; });
     return { days: dayList, per: per, students: stu, approx: approx, sessions: sorted };
+  }
+
+
+  /* ---------- KIỂM TRA KM THỰC TẾ: đối chiếu DAT ↔ sổ từng ngày, từng học viên ---------- */
+  function lev(a, b) {
+    if (a === b) return 0; var m = a.length, n = b.length; if (!m) return n; if (!n) return m;
+    var p = [], q; for (var j = 0; j <= n; j++) p[j] = j;
+    for (var i = 1; i <= m; i++) { q = [i]; for (var j2 = 1; j2 <= n; j2++) q[j2] = Math.min(p[j2] + 1, q[j2 - 1] + 1, p[j2 - 1] + (a[i - 1] === b[j2 - 1] ? 0 : 1)); p = q; }
+    return p[n];
+  }
+  function nameDist(a, b) {
+    var x = strip(a).replace(/\s+/g, ' ').trim(), y = strip(b).replace(/\s+/g, ' ').trim();
+    if (x === y) return 0;
+    var tx = x.split(' '), ty = y.split(' ');
+    // thiếu/thừa tên đệm: "NGUYEN VAN AN" ~ "NGUYEN AN"
+    var sh = tx.length < ty.length ? tx : ty, lg = sh === tx ? ty : tx;
+    if (sh.length >= 2 && sh[0] === lg[0] && sh[sh.length - 1] === lg[lg.length - 1] && sh.every(function (w) { return lg.indexOf(w) >= 0; })) return 1;
+    if (tx[tx.length - 1] !== ty[ty.length - 1] && lev(tx[tx.length - 1], ty[ty.length - 1]) > 1) return 9; // tên chính khác hẳn
+    return lev(x, y);
+  }
+  function auditDAT(an, lb, o) {
+    o = o || {};
+    var res = { days: [], perHV: [], names: [], outRange: (lb && lb.outRange) || [], totDat: 0, totSo: 0, mode: lb && lb.mode === 'dat' ? 'dat' : 'lich', bad: 0, cross: [] };
+    if (!an) return res;
+    var dat = {};
+    an.days.forEach(function (d) {
+      var km = 0, min = 0, n = 0, who = [];
+      Object.keys(d.in).forEach(function (k) { var c = d.in[k]; km += c.km; min += c.h * 60; n += c.n; who.push(k); c.sessions.forEach(function (s) { if (s.end != null && s.end > 1440) res.cross.push({ date: d.date, hv: k, start: s.start, end: s.end, km: s.km }); }); });
+      if (n) dat[d.date] = { km: km, min: min, n: n, who: who };
+    });
+    var so = {};
+    if (res.mode === 'dat') lb.lines.forEach(function (l) { if (l.src !== 'dat') return; var x = so[l.date] = so[l.date] || { km: 0, min: 0 }; x.km += +l.km || 0; x.min += l.minutes; });
+    var dates = Object.keys(dat).concat(Object.keys(so)).filter(function (d, i, a) { return a.indexOf(d) === i; }).sort();
+    dates.forEach(function (d) {
+      var a = dat[d], b = so[d], r = { date: d, datKm: a ? a.km : 0, soKm: b ? b.km : 0, datMin: a ? a.min : 0, n: a ? a.n : 0, who: a ? a.who : [], st: 'ok' };
+      if (res.mode === 'dat') {
+        if (a && !b) r.st = a.km >= 0.5 ? 'thieu' : 'nho';
+        else if (b && !a) r.st = 'sai';
+        else if (Math.abs(r.soKm - r.datKm) >= 1) r.st = 'lech';
+      }
+      if (r.st !== 'ok' && r.st !== 'nho') res.bad++;
+      res.totDat += r.datKm; res.totSo += r.soKm; res.days.push(r);
+    });
+    (an.students || []).forEach(function (n) {
+      var p = an.per[n] || { km: 0, h: 0, days: {}, n: 0, nightMin: 0, nightKm: 0, stdMin: 0 };
+      res.perHV.push({ name: n, km: p.km, h: p.h, days: Object.keys(p.days).length, n: p.n, nightMin: p.nightMin, stdMin: p.stdMin || 0, first: Object.keys(p.days).sort()[0] || null, last: Object.keys(p.days).sort().slice(-1)[0] || null });
+    });
+    var outN = {};
+    an.days.forEach(function (d) { Object.keys(d.out).forEach(function (k) { var c = d.out[k], x = outN[k] = outN[k] || { km: 0, n: 0, dates: [] }; x.km += c.km; x.n += c.n; if (x.dates.indexOf(d.date) < 0) x.dates.push(d.date); }); });
+    Object.keys(outN).forEach(function (nm) {
+      var best = null;
+      (an.students || []).forEach(function (s) { var dd = nameDist(nm, s); if (dd <= 2 && (!best || dd < best.d)) best = { hv: s, d: dd }; });
+      if (best) res.names.push({ dat: nm, hv: best.hv, d: best.d, km: outN[nm].km, n: outN[nm].n, dates: outN[nm].dates.sort() });
+    });
+    res.totDat = Math.round(res.totDat * 10) / 10; res.totSo = Math.round(res.totSo * 10) / 10;
+    if (res.mode === 'dat' && Math.abs(res.totDat - res.totSo) >= 1.5) res.bad++;
+    return res;
+  }
+  function auditFindings(a) {
+    var out = []; if (!a) return out;
+    var bad = a.days.filter(function (r) { return r.st === 'thieu' || r.st === 'sai' || r.st === 'lech'; });
+    var lbl = { thieu: 'DAT có nhưng sổ không ghi', sai: 'sổ ghi km DAT mà ngày đó không có DAT', lech: 'km sổ lệch DAT' };
+    if (a.mode === 'dat') {
+      if (bad.length || Math.abs(a.totDat - a.totSo) >= 1.5) out.push(F('cun', 'loi', 'Km thực tế trong sổ chưa khớp DAT: ' + bad.length + ' ngày', bad.slice(0, 20).map(function (r) { return fmtDM(r.date) + ' (' + lbl[r.st] + ': DAT ' + Math.round(r.datKm * 10) / 10 + ' km, sổ ' + Math.round(r.soKm) + ' km)'; }).join('; ') + (bad.length > 20 ? '; …' : '') + '. Tổng DAT ' + Math.round(a.totDat) + ' km, sổ ghi ' + Math.round(a.totSo) + ' km.', 'Mở bảng "Kiểm tra km thực tế" ở thẻ Sổ nhật ký để xem từng ngày, rồi bấm "Tải lại sổ".', R('cop', 'Km DAT là số liệu gốc, lệch là bị trả hồ sơ.')));
+      else out.push(F('cun', 'tot', 'Km thực tế khớp DAT: ' + a.days.filter(function (r) { return r.datKm > 0; }).length + ' ngày, ' + Math.round(a.totDat).toLocaleString('vi-VN') + ' km', 'Từng ngày có DAT đều được ghi vào sổ đúng ngày, km lệch dưới 1 km do làm tròn số nguyên.', ''));
+    }
+    a.perHV.filter(function (p) { return !p.n; }).forEach(function (p) {
+      var near = a.names.filter(function (x) { return x.hv === p.name; });
+      out.push(F('cop', 'loi', 'Học viên ' + p.name + ' chưa có phiên DAT nào', near.length ? 'Trên DAT có tên gần giống: ' + near.map(function (x) { return '"' + x.dat + '" (' + Math.round(x.km) + ' km, ' + x.n + ' phiên)'; }).join(', ') + '.' : 'Không tìm thấy tên nào trong file DAT đã nạp.', near.length ? 'Kiểm tra lại rồi bấm "Gộp" ở mục Kiểm tra km thực tế (tab Lọc DAT) nếu đúng là cùng một người.' : 'Kiểm tra lại chính tả tên, hoặc nạp thêm file DAT của xe học viên này chạy.'));
+    });
+    a.names.filter(function (x) { return (a.perHV.filter(function (p) { return p.name === x.hv; })[0] || {}).n; }).forEach(function (x) {
+      out.push(F('cun', 'canh', 'Tên DAT "' + x.dat + '" gần giống học viên ' + x.hv, x.n + ' phiên, ' + Math.round(x.km) + ' km chưa được cộng cho học viên (ngày ' + x.dates.slice(0, 6).map(fmtDM).join(', ') + (x.dates.length > 6 ? '…' : '') + ').', 'Nếu là cùng một người, bấm "Gộp" ở mục Kiểm tra km thực tế (tab Lọc DAT).'));
+    });
+    if (a.outRange.length) out.push(F('heo', 'canh', 'Có ' + a.outRange.length + ' ngày DAT nằm ngoài khoảng ngày của lịch', a.outRange.map(fmtDM).join(', ') + '. Đã đưa vào sổ đúng ngày chạy để không mất km.', 'Kiểm tra lại lịch dạy (ngày bắt đầu/kết thúc) hoặc file DAT có lẫn khóa khác không.'));
+    if (a.cross.length) out.push(F('cun', 'goiy', a.cross.length + ' phiên DAT chạy qua nửa đêm', a.cross.slice(0, 8).map(function (c) { return fmtDM(c.date) + ' ' + c.hv + ' ' + clock(c.start) + '–' + clock(c.end % 1440); }).join('; ') + '. Tính cho ngày bắt đầu phiên.', ''));
+    return out;
   }
 
   /* ---------- TIÊU CHUẨN (bảng quy định km, giờ thực hành do người dùng cung cấp) ---------- */
@@ -2231,7 +2323,7 @@ var Core = (function () {
     extractFleet: extractFleet, reviewFleet: reviewFleet, FLEET_TYPE: FLEET_TYPE, fleetType: fleetType,
     readWorkbook: readWorkbook, rowsFromText: rowsFromText, extractDAT: extractDAT, extractStudents: extractStudents, extractSchedule: extractSchedule,
     scheduleRow: scheduleRow, buildActualLogbook: buildActualLogbook, reviewActual: reviewActual, arrangeToStandard: arrangeToStandard, integerKm: integerKm, yardDays: yardDays, fillOneCaDays: fillOneCaDays, reviewStandard: reviewStandard, splitDay: splitDay, isRoad: isRoad, isCabin: isCabin, isSectionHeader: isSectionHeader, nDays: nDays, buildLogbook: buildLogbook,
-    dedupeSessions: dedupeSessions, analyzeDAT: analyzeDAT, reviewDAT: reviewDAT, reviewSchedule: reviewSchedule, reviewCross: reviewCross, reviewHabits: reviewHabits, reviewMoc: reviewMoc,
+    dedupeSessions: dedupeSessions, analyzeDAT: analyzeDAT, auditDAT: auditDAT, auditFindings: auditFindings, nameDist: nameDist, reviewDAT: reviewDAT, reviewSchedule: reviewSchedule, reviewCross: reviewCross, reviewHabits: reviewHabits, reviewMoc: reviewMoc,
     PERSONA: PERSONA, PRESETS: PRESETS, REQS: REQS, KT_FORMS: KT_FORMS, ktTheory: ktTheory, ktScore: ktScore, ktTheoryResult: ktTheoryResult, presetRows: presetRows, presetMoc: presetMoc, fromDateObj: fromDateObj, THU: THU
   };
 })();
@@ -2258,7 +2350,7 @@ if (typeof module !== 'undefined') module.exports = Core;
   function save() {
     if (RESTORING) return;
     try {
-      localStorage.setItem(KEY, JSON.stringify({ habits: H, draft: { students: S.students, z: S.z, hang: S.hang, reqOver: S.reqOver, plates: S.plates, course: S.course, rows: S.rows, moc: S.moc, presetKey: S.presetKey, soMode: S.soMode, ao: S.ao, kt: S.kt, classes: S.classes, activeClass: S.activeClass, soPlate: S.soPlate, stdOpt: S.stdOpt, fleet: S.fleet } }));
+      localStorage.setItem(KEY, JSON.stringify({ habits: H, draft: { students: S.students, z: S.z, hang: S.hang, reqOver: S.reqOver, plates: S.plates, course: S.course, rows: S.rows, moc: S.moc, presetKey: S.presetKey, soMode: S.soMode, ao: S.ao, kt: S.kt, classes: S.classes, activeClass: S.activeClass, soPlate: S.soPlate, stdOpt: S.stdOpt, fleet: S.fleet, alias: S.alias } }));
     } catch (e) { /* bỏ qua */ }
     if (typeof autoBackupSoon === 'function') autoBackupSoon();
   }
@@ -2306,7 +2398,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     hang: D.hang || (learned('hang') || {}).v || 'Bstđ',
     reqOver: D.reqOver || {}, kt: D.kt || null, stdOpt: Object.assign({ auto: true, caMax: 285, sanKmh: 4.8 }, D.stdOpt || {}), classes: D.classes || null, activeClass: D.activeClass || null, soPlate: D.soPlate || '',
     plates: D.plates || {},
-    fleet: D.fleet || null,
+    fleet: D.fleet || null, alias: D.alias || {},
     course: D.course || null, rows: (D.rows || []).map(C.scheduleRow), moc: D.moc || [], presetKey: D.presetKey || null,
     showTurns: (learned('showTurns') || {}).v === 'true',
     image: null, tab: 'dat', filterWho: null, filterLv: null,
@@ -2319,8 +2411,9 @@ if (typeof module !== 'undefined') module.exports = Core;
   })();
   if (!S.classes) { S.classes = {}; Object.keys(S.plates).forEach(function (k) { var r = S.plates[k]; if (r.names && r.names.length) S.classes['Lớp xe ' + C.plateFmt(k)] = { plates: [k], names: r.names.slice() }; }); }
 
-  var APP_VER = '3.1', APP_DATE = '17/11/2026';
+  var APP_VER = '3.2', APP_DATE = '17/11/2026';
   var CHANGELOG = [
+    ['3.2', '17/11/2026', 'Kiểm tra km thực tế: đối chiếu DAT ↔ sổ từng ngày, từng học viên; báo ngày thiếu/sai/lệch km, học viên chưa có DAT, tên DAT gõ khác (có nút Gộp). Không còn bỏ sót ngày DAT ít km, ngày DAT ngoài khoảng lịch, phiên STĐ khi lịch không có bài STĐ. Sổ xuất có thêm sheet Kiểm tra km DAT.'],
     ['3.1', '17/11/2026', 'Nút "Tải lại sổ" dựng lại sổ thủ công. Ngày sân và ca bổ sung tính giờ theo tỉ lệ học viên có mặt (vd 3/5 HV: 4 giờ 48/ngày thay vì 8 giờ).'],
     ['3.0', '16/11/2026', 'Ngày DAT chỉ có 1 ca (STĐ, đêm, ca lẻ) tự bổ sung bài hình tổng hợp trong sân. Km DAT dư sau khi các bài đủ ngày được dồn vào bài đường phức tạp, đường có tải. Đánh số phiên bản.'],
     ['2.9', '16/11/2026', 'Bài đường theo DAT nhận đủ số ngày như lịch; DAT ít ngày thì ghép ca sáng/chiều cho 2 bài.'],
@@ -2338,7 +2431,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     var c = document.getElementById('verLog');
     if (c) c.innerHTML = '<table class="fstbl"><tr><th>Phiên bản</th><th>Ngày</th><th>Thay đổi</th></tr>' + CHANGELOG.map(function (r, i) { return '<tr><td><b>' + r[0] + '</b>' + (i === 0 ? ' <span class="pill ok">đang dùng</span>' : '') + '</td><td>' + r[1] + '</td><td>' + r[2] + '</td></tr>'; }).join('') + '</table>';
   })();
-  var AN = null, LB = null, PLAN = null, STD = null, FINDINGS = [];
+  var AN = null, LB = null, PLAN = null, STD = null, FINDINGS = [], AUD = null;
   var FLEET = null;
   function indexFleet() { FLEET = null; if (S.fleet && S.fleet.list) { FLEET = { list: S.fleet.list, byPlate: {}, notes: S.fleet.notes || [] }; S.fleet.list.forEach(function (v) { FLEET.byPlate[v.plate] = v; }); } }
   indexFleet();
@@ -2845,11 +2938,11 @@ if (typeof module !== 'undefined') module.exports = Core;
     try { recompute0(); } finally { BUSY = false; }
   }
   function recompute0() {
-    AN = S.sessions.length ? C.analyzeDAT(S.sessions, { students: S.students, z: S.z, plateType: plateTypeMap() }) : null;
+    AN = S.sessions.length ? C.analyzeDAT(S.sessions, { students: S.students, z: S.z, alias: S.alias, plateType: plateTypeMap() }) : null;
     var cs = Object.assign({}, S.course, { students: S.students });
     PLAN = S.rows.length ? C.buildLogbook(cs, S.rows) : null;
     var plNow = loadedPlates(); if (S.soPlate && plNow.indexOf(S.soPlate) < 0) S.soPlate = '';
-    var anSo = AN && S.soPlate ? C.analyzeDAT(S.sessions.filter(function (x) { return x.plate === S.soPlate; }), { students: S.students, z: S.z, plateType: plateTypeMap() }) : AN;
+    var anSo = AN && S.soPlate ? C.analyzeDAT(S.sessions.filter(function (x) { return x.plate === S.soPlate; }), { students: S.students, z: S.z, alias: S.alias, plateType: plateTypeMap() }) : AN;
     LB = PLAN && S.soMode === 'dat' && anSo ? C.buildActualLogbook(cs, S.rows, anSo, S.ao) : (PLAN ? C.buildLogbook(cs, S.rows) : null);
     var RT = LB && LB.ratio > 0 ? Math.min(1, LB.ratio) : 1, DAYMIN = Math.round(480 * RT);
     if (LB && LB.mode === 'dat') C.fillOneCaDays(LB, S.course, { maxDayH: S.ao.maxDayH || 10, dayMin: DAYMIN, capMin: Math.round(285 * RT / 5) * 5 });
@@ -2857,7 +2950,9 @@ if (typeof module !== 'undefined') module.exports = Core;
     if (LB) C.yardDays(LB, { dayMin: DAYMIN, offMin: 5, offMax: Math.max(10, Math.round(40 * RT / 5) * 5) });
     if (LB) C.integerKm(LB, { diffMin: S.ao.kmDiffMin == null ? 10 : S.ao.kmDiffMin, diffMax: S.ao.kmDiffMax == null ? 50 : Math.max(S.ao.kmDiffMax, S.ao.kmDiffMin || 0) });
     var cfgReq = { req: reqFor(S.course.hang) };
+    AUD = AN ? C.auditDAT(LB && LB.mode === 'dat' ? anSo : AN, LB, {}) : null;
     FINDINGS = [];
+    if (AUD) FINDINGS = FINDINGS.concat(C.auditFindings(AUD));
     if (AN) FINDINGS = FINDINGS.concat(C.reviewDAT(AN, { req: req() }));
     if (AN && FLEET) FINDINGS = FINDINGS.concat(C.reviewFleet(AN, FLEET, { hang: S.hang }, TODAY));
     (function () {
@@ -3227,7 +3322,52 @@ if (typeof module !== 'undefined') module.exports = Core;
     }).join('') : '<li class="hint">Chưa học được gì. Cứ làm như bình thường, tool sẽ tự ghi nhận.</li>';
     $('#actLog').innerHTML = H.log.length ? H.log.slice(0, 60).map(function (l) { var d = new Date(l.t); return esc(C.fmtDMY(C.fromDateObj(d)) + ' ' + C.clock(d.getHours() * 60 + d.getMinutes()) + '  ' + l.a + (l.d ? ' · ' + l.d : '')); }).join('<br>') : 'Chưa có thao tác.';
   }
-  function renderAll() { renderDAT(); renderSo(); renderMoc(); renderKT(); renderCouncil(); renderRemind(); renderHabits(); }
+
+  /* ---------- Kiểm tra km thực tế (DAT ↔ sổ) ---------- */
+  function renderAudit() {
+    var a = AUD, boxD = $('#audDat'), boxS = $('#audSo');
+    if (!boxD || !boxS) return;
+    if (!a) { boxD.innerHTML = ''; boxS.innerHTML = ''; return; }
+    var hvBad = a.perHV.filter(function (p) { return !p.n; });
+    var namesHtml = a.names.length ? '<div style="margin-top:6px"><b>Tên trên DAT gần giống học viên (chưa được cộng km):</b><table><tr><th>Tên trên DAT</th><th>Có thể là</th><th class="n">Phiên</th><th class="n">Km</th><th>Ngày</th><th></th></tr>' +
+      a.names.map(function (x, i) { return '<tr class="x"><td>' + esc(x.dat) + '</td><td>' + esc(x.hv) + '</td><td class="n">' + x.n + '</td><td class="n">' + vn(x.km, 1) + '</td><td>' + x.dates.slice(0, 5).map(C.fmtDM).join(', ') + (x.dates.length > 5 ? '…' : '') + '</td><td><button class="btn sm" data-alias="' + i + '">Gộp vào ' + esc(x.hv.split(' ').slice(-1)[0]) + '</button></td></tr>'; }).join('') + '</table></div>' : '';
+    var aliasKeys = Object.keys(S.alias || {});
+    var aliasHtml = aliasKeys.length ? '<div class="hint" style="margin:6px 0 0">Đã gộp: ' + aliasKeys.map(function (k) { return esc(k) + ' → ' + esc(S.alias[k]) + ' <a href="#" data-unalias="' + esc(k) + '">bỏ</a>'; }).join(' · ') + '</div>' : '';
+    var apx = AN && AN.approx ? Object.keys(AN.approx) : [];
+    aliasHtml += apx.length ? '<div class="hint" style="margin:6px 0 0;color:#b26a00">Tự gộp vì giống nhau khi bỏ dấu (kiểm tra lại có đúng 1 người): ' + apx.map(function (k) { return '"' + esc(k) + '" → ' + esc(AN.approx[k]); }).join(' · ') + '</div>' : '';
+    var hvRows = a.perHV.map(function (p) { return '<tr class="' + (p.n ? '' : 'x') + '"><td>' + esc(p.name) + '</td><td class="n">' + p.n + '</td><td class="n">' + p.days + '</td><td class="n">' + vn(p.km, 1) + '</td><td class="n">' + C.fmtHM(p.h * 60) + '</td><td class="n">' + C.fmtHM(p.nightMin) + '</td><td>' + (p.first ? C.fmtDM(p.first) + ' → ' + C.fmtDM(p.last) : 'CHƯA CÓ DAT') + '</td></tr>'; }).join('');
+    var okD = !hvBad.length && !a.names.length;
+    boxD.innerHTML = '<div class="aud ' + (okD ? 'ok' : 'bad') + '"><b>Kiểm tra DAT từng học viên</b> · ' + (okD ? 'đủ DAT cho ' + a.perHV.length + ' học viên, không có tên lạ gần giống.' : (hvBad.length ? hvBad.length + ' học viên chưa có DAT. ' : '') + (a.names.length ? a.names.length + ' tên trên DAT gần giống học viên.' : '')) +
+      '<table><tr><th>Học viên</th><th class="n">Phiên</th><th class="n">Ngày</th><th class="n">Km DAT</th><th class="n">Giờ</th><th class="n">Giờ đêm</th><th>Từ → đến</th></tr>' + hvRows + '</table>' + namesHtml + aliasHtml + '</div>';
+    if (a.mode !== 'dat') { boxS.innerHTML = '<div class="aud"><b>Kiểm tra km thực tế</b> · Sổ đang ghi <b>theo lịch dạy</b>. Chọn "Theo thực tế DAT" để đối chiếu km sổ với DAT từng ngày.</div>'; return; }
+    var bad = a.days.filter(function (r) { return r.st === 'thieu' || r.st === 'sai' || r.st === 'lech'; });
+    var okS = !bad.length && Math.abs(a.totDat - a.totSo) < 1.5;
+    var lbl = { ok: 'Khớp', nho: 'Dưới 0,5 km', thieu: 'THIẾU trong sổ', sai: 'SAI NGÀY', lech: 'LỆCH KM' };
+    var rows = a.days.filter(function (r) { return r.datKm > 0 || r.soKm > 0; }).map(function (r) {
+      return '<tr class="' + (r.st === 'ok' || r.st === 'nho' ? '' : 'x') + '"><td>' + C.fmtDMY(r.date) + '</td><td class="n">' + r.n + '</td><td>' + esc(r.who.map(function (n) { return n.split(' ').slice(-1)[0]; }).join(', ')) + '</td><td class="n">' + vn(r.datKm, 1) + '</td><td class="n">' + Math.round(r.soKm) + '</td><td class="n">' + vn(r.soKm - r.datKm, 1) + '</td><td>' + lbl[r.st] + '</td></tr>';
+    }).join('');
+    boxS.innerHTML = '<div class="aud ' + (okS ? 'ok' : 'bad') + '"><b>Kiểm tra km thực tế (DAT ↔ sổ)</b> · ' + (okS ? 'Khớp: ' : 'CHƯA KHỚP ' + bad.length + ' ngày · ') + a.days.filter(function (r) { return r.datKm > 0; }).length + ' ngày DAT, tổng DAT <b>' + vn(a.totDat, 1) + ' km</b>, sổ ghi <b>' + Math.round(a.totSo) + ' km</b>' + (a.outRange.length ? ' · ' + a.outRange.length + ' ngày DAT ngoài lịch đã đưa vào sổ' : '') +
+      ' <details style="margin-top:4px"' + (okS ? '' : ' open') + '><summary>Xem từng ngày</summary><table><tr><th>Ngày</th><th class="n">Phiên</th><th>Học viên</th><th class="n">Km DAT</th><th class="n">Km sổ</th><th class="n">Chênh</th><th>Kết quả</th></tr>' + rows + '</table></details></div>';
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('[data-alias]');
+    if (b && AUD) { var x = AUD.names[+b.dataset.alias]; if (!x) return; S.alias = S.alias || {}; S.alias[x.dat] = x.hv; act('Gộp tên DAT', x.dat + ' → ' + x.hv); toast('rong', 'Đã gộp', '"' + x.dat + '" trên DAT được tính cho ' + x.hv + ' (' + Math.round(x.km) + ' km).'); recompute(); return; }
+    var u = e.target.closest && e.target.closest('[data-unalias]');
+    if (u) { e.preventDefault(); delete S.alias[u.dataset.unalias]; recompute(); }
+  });
+  function auditSheet() {
+    var a = AUD, aoa = [['KIỂM TRA KM THỰC TẾ DAT ↔ SỔ NHẬT KÝ'], ['Tổng DAT (học viên trong danh sách): ' + vn(a.totDat, 1) + ' km · Sổ ghi: ' + Math.round(a.totSo) + ' km'], [], ['Ngày', 'Số phiên', 'Học viên', 'Km DAT', 'Km sổ', 'Chênh', 'Kết quả']];
+    var lbl = { ok: 'Khớp', nho: 'Dưới 0,5 km', thieu: 'THIẾU trong sổ', sai: 'SAI NGÀY', lech: 'LỆCH KM' };
+    a.days.forEach(function (r) { aoa.push([C.fmtDMY(r.date), r.n, r.who.join(', '), Math.round(r.datKm * 10) / 10, Math.round(r.soKm), Math.round((r.soKm - r.datKm) * 10) / 10, a.mode === 'dat' ? lbl[r.st] : '']); });
+    aoa.push([]); aoa.push(['Học viên', 'Số phiên', 'Số ngày', 'Km DAT', 'Giờ', 'Giờ đêm', 'Từ ngày', 'Đến ngày']);
+    a.perHV.forEach(function (p) { aoa.push([p.name, p.n, p.days, Math.round(p.km * 10) / 10, C.fmtHM(p.h * 60), C.fmtHM(p.nightMin), p.first ? C.fmtDMY(p.first) : 'CHƯA CÓ DAT', p.last ? C.fmtDMY(p.last) : '']); });
+    if (a.names.length) { aoa.push([]); aoa.push(['Tên trên DAT gần giống', 'Có thể là', 'Số phiên', 'Km', 'Ngày']); a.names.forEach(function (x) { aoa.push([x.dat, x.hv, x.n, Math.round(x.km * 10) / 10, x.dates.map(C.fmtDM).join(', ')]); }); }
+    var ws = XLSX.utils.aoa_to_sheet(aoa); ws['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 40 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 16 }, { wch: 12 }];
+    Object.keys(ws).forEach(function (k) { if (k[0] === '!') return; var c = ws[k]; if (typeof c.v === 'string' && /THIẾU|SAI NGÀY|LỆCH|CHƯA CÓ/.test(c.v)) c.s = { font: { bold: true, color: { rgb: 'C62828' } } }; });
+    return ws;
+  }
+
+  function renderAll() { renderAudit(); renderDAT(); renderSo(); renderMoc(); renderKT(); renderCouncil(); renderRemind(); renderHabits(); }
 
   /* ---------------- Tranh luận AI ---------------- */
   var aiCtl = null;
@@ -3410,6 +3550,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     AN.sessions.forEach(function (s) { raw.push([C.plateFmt(s.plate), C.fmtDMY(s.date), C.clock(s.inMin), C.clock(s.outMin), s.name, s.hours, s.km, s.src]); });
     var ws4 = cellsToSheet(raw, function (r) { return r === 0 ? HDR : null; }); ws4['!cols'] = [12, 12, 10, 10, 28, 12, 14, 40].map(function (w) { return { wch: w }; });
     XLSX.utils.book_append_sheet(wb, ws4, 'PhienGoc');
+    if (AUD) XLSX.utils.book_append_sheet(wb, auditSheet(), 'KiemTraDAT');
     XLSX.utils.book_append_sheet(wb, findingsSheet(), 'HoiDong');
     act('Xuất Excel DAT', AN.students.length + ' HV');
     saveWb(wb, 'LOC_DAT_' + plateTag() + '_' + stamp() + '.xlsx');
@@ -3510,6 +3651,7 @@ if (typeof module !== 'undefined') module.exports = Core;
       var ws5 = cellsToSheet(mo, function (r) { return r === 0 ? HDR : st(); }); ws5['!cols'] = [{ wch: 46 }, { wch: 12 }, { wch: 12 }, { wch: 26 }];
       XLSX.utils.book_append_sheet(wb, ws5, 'Mốc');
     }
+    if (AUD) XLSX.utils.book_append_sheet(wb, auditSheet(), 'Kiểm tra km DAT');
     XLSX.utils.book_append_sheet(wb, findingsSheet(), 'Hội đồng');
     H.flags.soNoDat = !AN; save();
     act('Xuất sổ nhật ký', 'Khóa ' + c.khoa + ' ' + c.hang + ', ' + LB.lines.length + ' dòng');
