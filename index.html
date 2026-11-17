@@ -2422,8 +2422,9 @@ if (typeof module !== 'undefined') module.exports = Core;
   })();
   if (!S.classes) { S.classes = {}; Object.keys(S.plates).forEach(function (k) { var r = S.plates[k]; if (r.names && r.names.length) S.classes['Lớp xe ' + C.plateFmt(k)] = { plates: [k], names: r.names.slice() }; }); }
 
-  var APP_VER = '3.3', APP_DATE = '17/11/2026';
+  var APP_VER = '3.4', APP_DATE = '17/11/2026';
   var CHANGELOG = [
+    ['3.4', '17/11/2026', 'File xuất (Sổ TDTH, Sổ nhật ký) tô màu xen kẽ từng ngày cho dễ nhìn; km hiện số nguyên (44 thay vì 44.00).'],
     ['3.3', '17/11/2026', 'Dòng đầu mục (I, II, III…) không tính giờ vào sổ. Thiếu km so với chuẩn TT17 thì tự bổ sung km vào các bài trong sân tập lái cho đủ km tối thiểu.'],
     ['3.2', '17/11/2026', 'Kiểm tra km thực tế: đối chiếu DAT ↔ sổ từng ngày, từng học viên; báo ngày thiếu/sai/lệch km, học viên chưa có DAT, tên DAT gõ khác (có nút Gộp). Không còn bỏ sót ngày DAT ít km, ngày DAT ngoài khoảng lịch, phiên STĐ khi lịch không có bài STĐ. Sổ xuất có thêm sheet Kiểm tra km DAT.'],
     ['3.1', '17/11/2026', 'Nút "Tải lại sổ" dựng lại sổ thủ công. Ngày sân và ca bổ sung tính giờ theo tỉ lệ học viên có mặt (vd 3/5 HV: 4 giờ 48/ngày thay vì 8 giờ).'],
@@ -3583,9 +3584,10 @@ if (typeof module !== 'undefined') module.exports = Core;
     var aoa = [[title], ['Năm học ' + c.nam + ' · Số học viên thực tế: ' + c.hvThuc + ' / ' + c.hvLop + ' (tỉ lệ ' + Math.round(LB.ratio * 100) + '%)' + (c.giaoVien ? ' · Giáo viên: ' + c.giaoVien : '')], [],
       ['Ngày tháng', 'Nội dung bài giảng', 'Địa điểm', 'Số giờ thực hành', 'Số km thực hành', 'Họ tên học viên vắng mặt', '', 'Số nhiên liệu sử dụng', 'Chữ ký', '', 'Khung giờ'],
       ['', '', '', '', '', 'Có lý do', 'Không có lý do', '', 'Giáo viên', 'Trưởng ban nghề', '']];
-    var needRows = {};
+    var needRows = {}, bandRows = {}, bDay = -1, bPrev = null;
     LB.lines.forEach(function (l) {
       if (l.need) needRows[aoa.length] = 1;
+      if (l.date !== bPrev) { bDay++; bPrev = l.date; } bandRows[aoa.length] = bDay % 2;
       aoa.push([C.fmtDMY(l.date), l.ten, l.phamVi, l.minutes / 1440, l.km || '', '', '', '', '', '', l.segs.map(function (s) { return (s.k === 'dem' ? 'Đêm ' : '') + C.clock(s.start) + '–' + C.clock(s.end); }).join('; ') + (l.need ? ' · CẦN BỔ SUNG ~' + C.fmtHM(l.need.min) + (l.need.km ? ' / ' + C.r2(l.need.km) + ' km' : '') : '')]);
     });
     var first = 6, lastR = aoa.length;
@@ -3608,6 +3610,8 @@ if (typeof module !== 'undefined') module.exports = Core;
       else if (r >= 5 && r < lastR + 4) {
         var s = st({ alignment: { vertical: 'center', wrapText: true, horizontal: col === 0 || col >= 3 && col <= 4 ? 'center' : 'left' } });
         if (col === 3) s.numFmt = '[h]:mm';
+        if (col === 4) { s.numFmt = '0'; ws[a].z = '0'; }
+        if (bandRows[r] === 1 && r < lastR) s.fill = { fgColor: { rgb: 'FCE4D6' } };
         if (r >= lastR) s.font = { name: 'Times New Roman', sz: 12, bold: true };
         if (needRows[r]) { s.fill = { fgColor: { rgb: 'FFC7CE' } }; s.font = { name: 'Times New Roman', sz: 12, bold: true, color: { rgb: '9C0006' } }; }
         ws[a].s = s;
@@ -3681,20 +3685,20 @@ if (typeof module !== 'undefined') module.exports = Core;
     var plateKm = {}; LB.lines.forEach(function (l) { if (l.plate) plateKm[l.plate] = (plateKm[l.plate] || 0) + l.km; });
     var mainPlate = Object.keys(plateKm).sort(function (a, b) { return plateKm[b] - plateKm[a]; })[0] || (S.activeClass && S.classes[S.activeClass] ? S.classes[S.activeClass].plates[0] : '') || loadedPlates()[0] || '';
     var aoa = [[(c.giaoVien || 'Giáo viên') + ' - ' + c.hang + '-' + khoaNum], [], ['STT', 'Nội dung bài giảng', 'Địa điểm', 'Thời gian', 'Km']];
-    var kinds = {}, curPlate = null, prevDate = null, prevTen = null, prevPv = null;
+    var kinds = {}, band = {}, dayNo = -1, curPlate = null, prevDate = null, prevTen = null, prevPv = null;
     function base(t) { return String(t || '').replace(NIGHT_TXT, '').trim(); }
     LB.lines.forEach(function (l) {
       var pl = l.plate || curPlate || mainPlate;
       if (pl && pl !== curPlate) { kinds[aoa.length] = 'plate'; aoa.push(['', C.plateFmt(pl), '', '', '']); curPlate = pl; }
       var newDay = l.date !== prevDate;
-      if (newDay && prevDate) { /* dòng trống giữa các ngày giống sổ mẫu */ }
+      if (newDay) dayNo++;
       var ten = l.isNight ? 'Ban đêm' : l.ten, tShow;
       if (l.isNight) tShow = (!newDay && prevTen ? '// + Ban đêm' : 'Tập lái xe ban đêm');
       else tShow = (!newDay && base(l.ten) === prevTen) ? '//' : l.ten;
       var pvShow = (!newDay && l.phamVi === prevPv) ? '//' : l.phamVi;
       if (l.need) kinds[aoa.length] = 'need';
-      else if (l.addMin || l.addKm) kinds[aoa.length] = 'add';
-      aoa.push([newDay ? isoD(l.date) : '', tShow, pvShow, l.minutes / 1440, l.km ? Math.round(l.km * 100) / 100 : '']);
+      band[aoa.length] = dayNo % 2;
+      aoa.push([newDay ? isoD(l.date) : '', tShow, pvShow, l.minutes / 1440, l.km ? Math.round(l.km) : '']);
       if (l.need) aoa[aoa.length - 1].push('Cần bổ sung ~' + C.fmtHM(l.need.min) + (l.need.km ? ' / ' + C.r2(l.need.km) + ' km' : ''));
       if (!l.isNight) prevTen = base(l.ten);
       prevPv = l.phamVi; prevDate = l.date;
@@ -3724,7 +3728,8 @@ if (typeof module !== 'undefined') module.exports = Core;
         if (col === 0) { sty.numFmt = 'dd/mm'; ws[a].z = 'dd/mm'; sty.alignment.horizontal = 'center'; sty.font.bold = true; }
         if (col === 3 && typeof ws[a].v === 'number') ws[a].z = r >= tot ? '[h]:mm' : 'h:mm';
         if (col === 3) { sty.numFmt = r >= tot ? '[h]:mm' : 'h:mm'; sty.alignment.horizontal = 'center'; }
-        if (col === 4) { sty.numFmt = '0.00'; sty.alignment.horizontal = 'right'; }
+        if (col === 4 || (col === 5 && r >= tot)) { sty.numFmt = '0'; ws[a].z = '0'; sty.alignment.horizontal = 'right'; }
+        if (band[r] === 1 && col <= 4) sty.fill = { fgColor: { rgb: 'FCE4D6' } };
         if (kinds[r] === 'plate') sty.font = { name: 'Times New Roman', sz: 12, bold: true, color: { rgb: '1F4E79' } };
         if (kinds[r] === 'add') sty.fill = { fgColor: { rgb: 'E2EFDA' } };
         if (kinds[r] === 'need') { sty.fill = { fgColor: { rgb: 'FFC7CE' } }; sty.font = { name: 'Times New Roman', sz: 12, bold: true, color: { rgb: '9C0006' } }; }
