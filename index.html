@@ -904,7 +904,8 @@ var Core = (function () {
   function isSectionHeader(r) {
     return /^[IVX]+$|^[A-D]$/.test(r.tt) && r.gio == null && r.ca1 == null && r.ca2 == null && r.dem == null;
   }
-  function defaultVaoSo(r) { return !!r.tu && !isCabin(r) && !isSectionHeader(r); }
+  function isHeadingRow(r) { return /^[IVX]+$/.test(String(r.tt || '').trim()) || /^[IVX]+$/.test(String(r.bai || '').trim()); }
+  function defaultVaoSo(r) { return !!r.tu && !isCabin(r) && !isSectionHeader(r) && !isHeadingRow(r); }
   function nDays(r) {
     if (!r.tu) return 0;
     if (r.den) return Math.max(1, diffDays(r.tu, r.den) + 1);
@@ -1492,7 +1493,7 @@ var Core = (function () {
     lb.lines.forEach(function (l) { if (!byDay[l.date]) { byDay[l.date] = []; days.push(l.date); } byDay[l.date].push(l); });
     // 1) tổng km từng ngày làm tròn số nguyên, giữ đúng tổng cả sổ (phương pháp phần dư lớn nhất)
     var raw = days.map(function (d) { return byDay[d].reduce(function (t, l) { return t + (+l.km || 0); }, 0); });
-    var grand = Math.round(raw.reduce(function (a, b) { return a + b; }, 0));
+    var grand = Math.ceil(raw.reduce(function (a, b) { return a + b; }, 0) - 1e-6);
     var ints = raw.map(Math.floor), rest = grand - ints.reduce(function (a, b) { return a + b; }, 0);
     raw.map(function (v, i) { return { i: i, f: v - Math.floor(v) }; }).sort(function (a, b) { return b.f - a.f || a.i - b.i; })
       .forEach(function (x) { if (rest > 0) { ints[x.i]++; rest--; } });
@@ -1582,18 +1583,28 @@ var Core = (function () {
       lb.lines.forEach(function (l) { if (!yd[l.date]) { yd[l.date] = { ls: [], ok: true, fixedMin: 0 }; ydKey.push(l.date); } var x = yd[l.date]; x.ls.push(l); if (l.fixed) x.fixedMin += l.minutes; else if (l.src === 'dat' || l.road || l.isStd || (l.segs || []).some(function (s) { return s.k === 'dem'; })) x.ok = false; });
       var yDays = ydKey.filter(function (d) { var x = yd[d]; return x.ok && x.ls.some(function (l) { return !l.fixed && speed(l) > 0; }); });
       var needK2 = res.targetKm - tKm, prog = true;
-      while (needK2 > 0.05 && prog) {
-        prog = false;
-        yDays.forEach(function (d) {
-          if (needK2 <= 0.05) return;
-          var x = yd[d], ys = x.ls.filter(function (l) { return !l.fixed && speed(l) > 0; });
-          var kmNow = ys.reduce(function (t, l) { return t + l.km; }, 0), sp = speed(ys[0]);
-          var cap = Math.floor(((o.dayMin - x.fixedMin) / 60 * sp - kmNow) * 10) / 10;
-          if (cap < 0.5) return;
-          var ak = Math.min(cap, 2, Math.ceil(needK2 * 10) / 10), l0 = ys[0];
-          l0.km = Math.round((l0.km + ak) * 10) / 10; l0.addKm += ak; var sgx = l0.segs[l0.segs.length - 1]; if (sgx) sgx.km = Math.round(((sgx.km || 0) + ak) * 10) / 10;
-          needK2 -= ak; tKm += ak; prog = true;
-        });
+      function addKmTo(l0, ak) { l0.km = Math.round((l0.km + ak) * 10) / 10; l0.addKm += ak; var sgx = l0.segs[l0.segs.length - 1]; if (sgx) sgx.km = Math.round(((sgx.km || 0) + ak) * 10) / 10; needK2 -= ak; tKm += ak; }
+      // nấc 1: tốc độ hợp lý từng bài; nấc 2–3: nới tốc độ (tối đa 12 km/h) để đủ km tối thiểu theo chuẩn
+      [1, 1.5, 2].forEach(function (mul) {
+        prog = true;
+        while (needK2 > 0.05 && prog) {
+          prog = false;
+          yDays.forEach(function (d) {
+            if (needK2 <= 0.05) return;
+            var x = yd[d], ys = x.ls.filter(function (l) { return !l.fixed && speed(l) > 0; });
+            var kmNow = ys.reduce(function (t, l) { return t + l.km; }, 0), sp = Math.min(12, speed(ys[0]) * mul);
+            var cap = Math.floor(((o.dayMin - x.fixedMin) / 60 * sp - kmNow) * 10) / 10;
+            if (cap < 0.5) return;
+            addKmTo(ys[0], Math.min(cap, 2, Math.ceil(needK2 * 10) / 10)); prog = true;
+          });
+        }
+      });
+      // vẫn thiếu: chia đều phần còn lại cho các ngày sân để chắc chắn đạt km tối thiểu
+      if (needK2 > 0.05 && yDays.length) {
+        res.forcedKm = Math.round(needK2 * 10) / 10;
+        var per = needK2 / yDays.length;
+        yDays.forEach(function (d) { var ys = yd[d].ls.filter(function (l) { return !l.fixed && speed(l) > 0; }); if (ys.length) addKmTo(ys[0], Math.round(per * 10) / 10); });
+        if (needK2 > 0) { var lastD = yd[yDays[yDays.length - 1]].ls.filter(function (l) { return !l.fixed && speed(l) > 0; })[0]; if (lastD) addKmTo(lastD, Math.ceil(needK2 * 10) / 10); }
       }
       lb.lines.forEach(function (l) { res.addMin += l.addMin; res.addKm += l.addKm; });
     } else if (o.auto !== false) {
@@ -2322,7 +2333,7 @@ var Core = (function () {
     parseTime: parseTime, fmtHM: fmtHM, clock: clock, num: num, r2: r2, plateFmt: plateFmt, plateCompact: plateCompact, plateFromFilename: plateFromFilename,
     extractFleet: extractFleet, reviewFleet: reviewFleet, FLEET_TYPE: FLEET_TYPE, fleetType: fleetType,
     readWorkbook: readWorkbook, rowsFromText: rowsFromText, extractDAT: extractDAT, extractStudents: extractStudents, extractSchedule: extractSchedule,
-    scheduleRow: scheduleRow, buildActualLogbook: buildActualLogbook, reviewActual: reviewActual, arrangeToStandard: arrangeToStandard, integerKm: integerKm, yardDays: yardDays, fillOneCaDays: fillOneCaDays, reviewStandard: reviewStandard, splitDay: splitDay, isRoad: isRoad, isCabin: isCabin, isSectionHeader: isSectionHeader, nDays: nDays, buildLogbook: buildLogbook,
+    scheduleRow: scheduleRow, isHeadingRow: isHeadingRow, buildActualLogbook: buildActualLogbook, reviewActual: reviewActual, arrangeToStandard: arrangeToStandard, integerKm: integerKm, yardDays: yardDays, fillOneCaDays: fillOneCaDays, reviewStandard: reviewStandard, splitDay: splitDay, isRoad: isRoad, isCabin: isCabin, isSectionHeader: isSectionHeader, nDays: nDays, buildLogbook: buildLogbook,
     dedupeSessions: dedupeSessions, analyzeDAT: analyzeDAT, auditDAT: auditDAT, auditFindings: auditFindings, nameDist: nameDist, reviewDAT: reviewDAT, reviewSchedule: reviewSchedule, reviewCross: reviewCross, reviewHabits: reviewHabits, reviewMoc: reviewMoc,
     PERSONA: PERSONA, PRESETS: PRESETS, REQS: REQS, KT_FORMS: KT_FORMS, ktTheory: ktTheory, ktScore: ktScore, ktTheoryResult: ktTheoryResult, presetRows: presetRows, presetMoc: presetMoc, fromDateObj: fromDateObj, THU: THU
   };
@@ -2350,7 +2361,7 @@ if (typeof module !== 'undefined') module.exports = Core;
   function save() {
     if (RESTORING) return;
     try {
-      localStorage.setItem(KEY, JSON.stringify({ habits: H, draft: { students: S.students, z: S.z, hang: S.hang, reqOver: S.reqOver, plates: S.plates, course: S.course, rows: S.rows, moc: S.moc, presetKey: S.presetKey, soMode: S.soMode, ao: S.ao, kt: S.kt, classes: S.classes, activeClass: S.activeClass, soPlate: S.soPlate, stdOpt: S.stdOpt, fleet: S.fleet, alias: S.alias } }));
+      localStorage.setItem(KEY, JSON.stringify({ habits: H, draft: { students: S.students, z: S.z, hang: S.hang, reqOver: S.reqOver, plates: S.plates, course: S.course, rows: S.rows, moc: S.moc, presetKey: S.presetKey, soMode: S.soMode, ao: S.ao, kt: S.kt, classes: S.classes, activeClass: S.activeClass, soPlate: S.soPlate, stdOpt: S.stdOpt, fleet: S.fleet, alias: S.alias, migHead33: S.migHead33 } }));
     } catch (e) { /* bỏ qua */ }
     if (typeof autoBackupSoon === 'function') autoBackupSoon();
   }
@@ -2398,7 +2409,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     hang: D.hang || (learned('hang') || {}).v || 'Bstđ',
     reqOver: D.reqOver || {}, kt: D.kt || null, stdOpt: Object.assign({ auto: true, caMax: 285, sanKmh: 4.8 }, D.stdOpt || {}), classes: D.classes || null, activeClass: D.activeClass || null, soPlate: D.soPlate || '',
     plates: D.plates || {},
-    fleet: D.fleet || null, alias: D.alias || {},
+    fleet: D.fleet || null, alias: D.alias || {}, migHead33: !!D.migHead33,
     course: D.course || null, rows: (D.rows || []).map(C.scheduleRow), moc: D.moc || [], presetKey: D.presetKey || null,
     showTurns: (learned('showTurns') || {}).v === 'true',
     image: null, tab: 'dat', filterWho: null, filterLv: null,
@@ -2411,8 +2422,9 @@ if (typeof module !== 'undefined') module.exports = Core;
   })();
   if (!S.classes) { S.classes = {}; Object.keys(S.plates).forEach(function (k) { var r = S.plates[k]; if (r.names && r.names.length) S.classes['Lớp xe ' + C.plateFmt(k)] = { plates: [k], names: r.names.slice() }; }); }
 
-  var APP_VER = '3.2', APP_DATE = '17/11/2026';
+  var APP_VER = '3.3', APP_DATE = '17/11/2026';
   var CHANGELOG = [
+    ['3.3', '17/11/2026', 'Dòng đầu mục (I, II, III…) không tính giờ vào sổ. Thiếu km so với chuẩn TT17 thì tự bổ sung km vào các bài trong sân tập lái cho đủ km tối thiểu.'],
     ['3.2', '17/11/2026', 'Kiểm tra km thực tế: đối chiếu DAT ↔ sổ từng ngày, từng học viên; báo ngày thiếu/sai/lệch km, học viên chưa có DAT, tên DAT gõ khác (có nút Gộp). Không còn bỏ sót ngày DAT ít km, ngày DAT ngoài khoảng lịch, phiên STĐ khi lịch không có bài STĐ. Sổ xuất có thêm sheet Kiểm tra km DAT.'],
     ['3.1', '17/11/2026', 'Nút "Tải lại sổ" dựng lại sổ thủ công. Ngày sân và ca bổ sung tính giờ theo tỉ lệ học viên có mặt (vd 3/5 HV: 4 giờ 48/ngày thay vì 8 giờ).'],
     ['3.0', '16/11/2026', 'Ngày DAT chỉ có 1 ca (STĐ, đêm, ca lẻ) tự bổ sung bài hình tổng hợp trong sân. Km DAT dư sau khi các bài đủ ngày được dồn vào bài đường phức tạp, đường có tải. Đánh số phiên bản.'],
@@ -2431,6 +2443,8 @@ if (typeof module !== 'undefined') module.exports = Core;
     var c = document.getElementById('verLog');
     if (c) c.innerHTML = '<table class="fstbl"><tr><th>Phiên bản</th><th>Ngày</th><th>Thay đổi</th></tr>' + CHANGELOG.map(function (r, i) { return '<tr><td><b>' + r[0] + '</b>' + (i === 0 ? ' <span class="pill ok">đang dùng</span>' : '') + '</td><td>' + r[1] + '</td><td>' + r[2] + '</td></tr>'; }).join('') + '</table>';
   })();
+  // chuyển đổi 1 lần (bản 3.3): dòng đầu mục I, II… đã lưu từ trước không tính vào sổ
+  if (!S.migHead33) { S.rows.forEach(function (r) { if (r.vaoSo && C.isHeadingRow(r)) r.vaoSo = false; }); S.migHead33 = true; }
   var AN = null, LB = null, PLAN = null, STD = null, FINDINGS = [], AUD = null;
   var FLEET = null;
   function indexFleet() { FLEET = null; if (S.fleet && S.fleet.list) { FLEET = { list: S.fleet.list, byPlate: {}, notes: S.fleet.notes || [] }; S.fleet.list.forEach(function (v) { FLEET.byPlate[v.plate] = v; }); } }
